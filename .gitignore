@@ -1,14 +1,35 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
 
 # Virtual environments
-.venv
-.idea/ 
-*.lock
-resources/vectorstore
+.venv/
+
+# Environment variables — never commit this
 .env
+
+# ChromaDB — regenerate with: python -m src.ingestion.ingest
+vectorstore/
+resources/vectorstore/
+
+# IDE & OS
+.DS_Store
+.idea/
+*.lock
+.python-version
+
+# Claude Code
+.claude/
+
+# Test cache
+.pytest_cache/
+
+# Planning docs
+rag-project-plan.md
+
+# Unused scaffolding
+app/
