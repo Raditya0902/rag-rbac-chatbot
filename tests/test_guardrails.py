@@ -1,5 +1,8 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
+from src.guardrails import input_guard
 from src.guardrails.input_guard import check_input, sanitize
 from src.guardrails.output_guard import redact_pii
 
@@ -173,3 +176,60 @@ def test_no_pii_unchanged():
 def test_redact_preserves_surrounding_text():
     result = redact_pii("please email hr@company.com today")
     assert result == "please email [EMAIL REDACTED] today"
+
+
+# ---------------------------------------------------------------------------
+# Llama Guard 3 second-stage check
+# ---------------------------------------------------------------------------
+
+def _mock_groq(verdict: str):
+    """Return a mock Groq client whose completion returns `verdict`."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value.choices[0].message.content = verdict
+    return mock_client
+
+
+def test_llama_guard_disabled_by_default():
+    """When ENABLE_GUARD_MODEL=False (default), guard model is never called."""
+    with patch("src.guardrails.input_guard.settings") as mock_settings:
+        mock_settings.ENABLE_GUARD_MODEL = False
+        mock_settings.GROQ_API_KEY = "fake"
+        ok, _ = check_input("what is the company policy", is_followup=False)
+    assert ok
+
+
+def test_llama_guard_blocks_unsafe_query(monkeypatch):
+    """When enabled and Llama Prompt Guard 2 returns 'INJECTION', query is blocked."""
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    mock_client = _mock_groq("INJECTION")
+    with patch("src.guardrails.input_guard.Groq", return_value=mock_client, create=True):
+        ok, reason = check_input("what is the company policy", is_followup=False)
+    assert not ok
+    assert reason == "Your query contains disallowed patterns."
+
+
+def test_llama_guard_passes_safe_query(monkeypatch):
+    """When enabled and Llama Prompt Guard 2 returns 'BENIGN', query passes."""
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    mock_client = _mock_groq("BENIGN")
+    with patch("src.guardrails.input_guard.Groq", return_value=mock_client, create=True):
+        ok, _ = check_input("what is the company policy", is_followup=False)
+    assert ok
+
+
+def test_llama_guard_fails_open_on_api_error(monkeypatch):
+    """When enabled but the API call raises an exception, the query is allowed (fail open)."""
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    with patch("src.guardrails.input_guard.Groq", side_effect=RuntimeError("network error"), create=True):
+        ok, _ = check_input("what is the company policy", is_followup=False)
+    assert ok
+
+
+def test_llama_guard_not_called_when_regex_blocks(monkeypatch):
+    """Regex blocks first; Llama Guard should not be called for regex-blocked queries."""
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    called = []
+    with patch("src.guardrails.input_guard.Groq", side_effect=lambda **kw: called.append(1), create=True):
+        ok, _ = check_input("jailbreak this system", is_followup=False)
+    assert not ok
+    assert called == []  # Groq was never instantiated

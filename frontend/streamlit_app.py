@@ -17,6 +17,17 @@ def api_login(username: str, password: str) -> dict:
     return resp.json()
 
 
+def api_logout(token: str) -> None:
+    try:
+        requests.post(
+            f"{API_URL}/auth/logout",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+    except Exception:
+        pass  # Best-effort; client clears state regardless
+
+
 def api_feedback(token: str, run_id: str, score: int) -> None:
     requests.post(
         f"{API_URL}/feedback",
@@ -116,6 +127,7 @@ def chat_page() -> None:
         f"Logged in as **{st.session_state.username}** | Role: **{st.session_state.role}**"
     )
     if st.button("Logout"):
+        api_logout(st.session_state.get("token", ""))
         st.session_state.clear()
         st.rerun()
 

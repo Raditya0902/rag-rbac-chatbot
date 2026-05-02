@@ -7,16 +7,19 @@ An enterprise-grade internal knowledge base chatbot built with Retrieval-Augment
 ## Features
 
 - **Role-Based Access Control** — retrieval is filtered at the vector store level per user role, not just the UI
-- **JWT Authentication** — secure token-based auth with expiry; no credentials sent on every request
+- **Hybrid Retrieval** — BM25 + vector (ChromaDB MMR) ensemble with cross-encoder re-ranking for higher precision
+- **JWT Authentication** — secure token-based auth with expiry and server-side token revocation (Redis denylist)
 - **Streaming Responses** — token-by-token streaming via Server-Sent Events (SSE)
-- **Conversation Memory** — multi-turn chat with question condensing for follow-ups ("tell me more about that" works correctly)
-- **Input Guardrails** — blocks prompt injection, jailbreaks, SQL injection, off-topic queries
+- **Conversation Memory** — Redis-backed multi-turn chat with question condensing for follow-ups
+- **Input Guardrails** — blocks prompt injection, jailbreaks, SQL injection, XSS, and off-topic queries
 - **Output Guardrails** — PII redaction (SSN, email, phone, credit card) from all responses
+- **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — faithfulness 0.875, answer relevancy 0.738
+- **RAGAS Evaluation** — faithfulness + answer relevancy scoring with Gemini as evaluator
+- **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
-- **44 Automated Tests** — full coverage of security-critical guardrail logic
+- **77 Automated Tests** — guardrails, retrieval re-ranking, Redis denylist, re-ingestion logic
 - **Docker** — one-command deployment with health checks
 
 ---
@@ -30,13 +33,14 @@ User
  │
  └─ POST /chat/stream  (Bearer token)
          │
-         ├─ Rate Limiter        (15 req/min per user)
-         ├─ JWT Validation
-         ├─ Input Guardrail     (injection, off-topic, sanitize)
-         ├─ Question Condenser  (follow-ups → standalone question)
-         ├─ RBAC Retriever      (ChromaDB MMR, namespace filter)
-         ├─ RAG Chain           (LLM + conversation history)
-         ├─ Output Guardrail    (PII redaction)
+         ├─ Rate Limiter          (15 req/min per user)
+         ├─ JWT Validation + Denylist check (Redis)
+         ├─ Input Guardrail       (injection, off-topic, sanitize)
+         ├─ Question Condenser    (follow-ups → standalone question)
+         ├─ RBAC Retriever        (BM25 + ChromaDB MMR ensemble, namespace filter)
+         ├─ Cross-Encoder Re-ranker
+         ├─ RAG Chain             (LLM + Redis conversation history)
+         ├─ Output Guardrail      (PII redaction)
          └─ SSE Stream ─────────────────► Browser
                  │
                  └─ LangSmith Tracing + Structured Logs
@@ -61,11 +65,14 @@ User
 | LLM | Llama 3.3 70B via Groq |
 | Embeddings | `all-MiniLM-L6-v2` (HuggingFace) |
 | Vector Store | ChromaDB (persistent, MMR search) |
+| BM25 | rank-bm25 |
+| Re-ranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | RAG Framework | LangChain |
+| Session Memory | Redis (2-hour TTL, 5-turn window) |
 | API | FastAPI + uvicorn |
-| Auth | JWT (python-jose, bcrypt) |
+| Auth | JWT (python-jose, bcrypt) + Redis denylist |
 | Frontend | Streamlit |
-| Evaluation | RAGAS |
+| Evaluation | RAGAS + Gemini 2.0 Flash |
 | Observability | LangSmith + structlog |
 | Rate Limiting | slowapi |
 | Deployment | Docker + docker-compose |
@@ -78,41 +85,46 @@ User
 rag-rbac-chatbot/
 ├── src/
 │   ├── api/
-│   │   ├── auth.py          # POST /auth/login
-│   │   ├── chat.py          # POST /chat, /chat/stream, /feedback
-│   │   └── limiter.py       # per-user rate limiter
+│   │   ├── auth.py              # POST /auth/login, /auth/logout
+│   │   ├── chat.py              # POST /chat, /chat/stream, /feedback
+│   │   └── limiter.py           # per-user rate limiter
 │   ├── auth/
-│   │   ├── jwt.py           # token create/decode
-│   │   ├── rbac.py          # role → namespace map
-│   │   └── users.py         # user store + bcrypt auth
+│   │   ├── denylist.py          # Redis-backed JWT revocation
+│   │   ├── jwt.py               # token create/decode
+│   │   ├── rbac.py              # role → namespace map
+│   │   └── users.py             # user store + bcrypt auth
 │   ├── guardrails/
-│   │   ├── input_guard.py   # injection detection, domain filter
-│   │   └── output_guard.py  # PII redaction
+│   │   ├── input_guard.py       # injection detection, domain filter, Llama Guard 3
+│   │   └── output_guard.py      # PII redaction
 │   ├── ingestion/
-│   │   ├── ingest.py        # run once to populate ChromaDB
-│   │   ├── loaders.py       # markdown + CSV loaders
-│   │   └── splitter.py      # recursive character splitter
+│   │   ├── ingest.py            # full ingest — populates ChromaDB
+│   │   ├── loaders.py           # markdown + CSV loaders with MD5 hashing
+│   │   └── splitter.py          # recursive character splitter
 │   ├── monitoring/
-│   │   ├── langsmith_setup.py
-│   │   └── ragas_eval.py    # RAGAS faithfulness + answer relevancy
+│   │   ├── langsmith_setup.py   # feedback logging to LangSmith
+│   │   └── ragas_eval.py        # RAGAS faithfulness + answer relevancy
 │   ├── rag/
-│   │   ├── chain.py         # run_query + stream_query
-│   │   └── prompts.py       # RAG + condense prompts
+│   │   ├── chain.py             # run_query + stream_query
+│   │   └── prompts.py           # RAG + condense prompts
 │   ├── vectorstore/
-│   │   └── store.py         # ChromaDB + RBAC retriever
+│   │   └── store.py             # hybrid retriever + cross-encoder re-ranker
 │   ├── config.py
 │   └── logging_config.py
 ├── frontend/
 │   └── streamlit_app.py
 ├── tests/
-│   └── test_guardrails.py   # 44 tests
+│   ├── test_guardrails.py       # 44 tests — injection, PII, domain filter
+│   ├── test_retrieval.py        # 9 tests — cross-encoder re-ranking
+│   ├── test_redis.py            # 11 tests — JWT denylist
+│   └── test_reingest.py         # 13 tests — incremental re-ingestion
 ├── resources/
-│   └── data/                # mock company documents
+│   └── data/                    # mock company documents
 │       ├── engineering/
 │       ├── finance/
 │       ├── general/
 │       ├── hr/
 │       └── marketing/
+├── reingest.py                  # incremental re-ingestion (changed files only)
 ├── main.py
 ├── Dockerfile
 ├── docker-compose.yml
@@ -125,7 +137,9 @@ rag-rbac-chatbot/
 
 ### Prerequisites
 - Python 3.10+
-- A [Groq API key](https://console.groq.com) (free tier works)
+- Redis running locally (or via Docker)
+- A [Groq API key](https://console.groq.com) (free tier — used for the RAG chain)
+- A [Google AI Studio API key](https://aistudio.google.com) (free tier — used for RAGAS evaluation only)
 - Optionally a [LangSmith API key](https://smith.langchain.com) for tracing
 
 ### 1. Clone and install
@@ -141,13 +155,19 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# Edit .env and add your GROQ_API_KEY and JWT_SECRET_KEY
+# Edit .env — at minimum set GROQ_API_KEY, GOOGLE_API_KEY, and JWT_SECRET_KEY
 ```
 
 ### 3. Ingest documents into ChromaDB
 
 ```bash
 python -m src.ingestion.ingest
+```
+
+To re-index only changed documents after edits:
+
+```bash
+python reingest.py
 ```
 
 ### 4. Run
@@ -191,16 +211,20 @@ Both services start automatically. The frontend waits for the backend health che
 
 ## Evaluation
 
-Run RAGAS evaluation (requires the backend to be running):
+RAGAS evaluation uses Gemini 2.0 Flash (separate from the Groq RAG chain) so the two don't share token budgets.
 
 ```bash
-python -m src.monitoring.ragas_eval
+# Run against the 25-question subset
+python -m src.monitoring.ragas_eval --subset --record "description of what changed"
+
+# If the eval phase fails mid-run, retry scoring without re-running RAG queries
+python -m src.monitoring.ragas_eval --eval-only --record "description of what changed"
+
+# Full 50-question set
+python -m src.monitoring.ragas_eval --record "description of what changed"
 ```
 
-| Metric | Score |
-|--------|-------|
-| Faithfulness | **0.875** |
-| Answer Relevancy | **0.738** |
+Results are appended to `EVAL_RESULTS.md`.
 
 ---
 
@@ -210,7 +234,11 @@ python -m src.monitoring.ragas_eval
 pytest tests/ -v
 ```
 
-44 tests covering injection detection, off-topic filtering, follow-up handling, HTML sanitization, and PII redaction.
+77 tests covering:
+- Injection detection, off-topic filtering, follow-up handling, HTML sanitization, PII redaction
+- Cross-encoder re-ranking order and metadata preservation
+- Redis JWT denylist revocation and failure handling
+- Incremental re-ingestion change detection and MD5 hashing
 
 ---
 
@@ -219,6 +247,7 @@ pytest tests/ -v
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | POST | `/auth/login` | None | Returns JWT token |
+| POST | `/auth/logout` | Bearer | Revokes token server-side |
 | POST | `/chat` | Bearer | Standard chat |
 | POST | `/chat/stream` | Bearer | Streaming chat (SSE) |
 | POST | `/feedback` | Bearer | Submit 👍👎 feedback |

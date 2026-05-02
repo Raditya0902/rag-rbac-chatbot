@@ -1,9 +1,14 @@
+import argparse
+import json
 import os
+import time
 import warnings
+from datetime import datetime, timezone
+from pathlib import Path
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -12,62 +17,122 @@ from ragas.metrics._answer_relevance import AnswerRelevancy
 
 from src.auth.rbac import ROLE_NAMESPACE_MAP
 from src.config import settings
-from src.vectorstore.store import get_embeddings, get_rbac_retriever
+from src.rag.chain import run_query
+from src.vectorstore.store import get_embeddings, get_rbac_retriever, rerank_docs
 
-EVAL_QUESTIONS = [
-    # General
-    {"question": "What is the company's remote work policy?",                    "role": "General"},
-    {"question": "What are the core values of the company?",                     "role": "General"},
-    # Finance
-    {"question": "What are the quarterly revenue figures?",                      "role": "Finance"},
-    {"question": "What is the company's net profit margin?",                     "role": "Finance"},
-    # Engineering
-    {"question": "What technologies does the engineering team use?",             "role": "Engineering"},
-    {"question": "What is the software development process used by the team?",   "role": "Engineering"},
-    # HR
-    {"question": "What are the employee benefits?",                              "role": "HR"},
-    {"question": "What is the leave policy for employees?",                      "role": "HR"},
-    # Marketing
-    {"question": "What were the Q4 marketing results?",                          "role": "Marketing"},
-    {"question": "What is the target customer segment for marketing campaigns?", "role": "Marketing"},
-]
+_QUESTIONS_FILE = Path(__file__).parents[2] / "eval_questions.json"
+_SUBSET_FILE = Path(__file__).parents[2] / "eval_questions_subset.json"
+_CACHE_FILE = Path(__file__).parents[2] / "eval_samples_cache.json"
 
 
-def run_evaluation() -> None:
-    from src.rag.chain import run_query
+def load_eval_questions(subset: bool = False) -> list[dict]:
+    path = _SUBSET_FILE if (subset and _SUBSET_FILE.exists()) else _QUESTIONS_FILE
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
-    # Use a larger model for scoring — small 8b models are weak at the NLI
-    # decomposition task that RAGAS faithfulness relies on.
+
+def _run_query_with_retry(question: str, namespaces: list, llm, max_wait: int = 3600) -> dict:
+    """Call run_query with the given LLM, retrying on rate-limit errors."""
+    import re
+
+    waited = 0
+    while True:
+        try:
+            return run_query(question, namespaces, llm=llm)
+        except Exception as exc:
+            msg = str(exc)
+            if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
+                raise
+            match = re.search(r"retry in ([\d.]+)s", msg)
+            secs = float(match.group(1)) + 5 if match else 60
+            if waited + secs > max_wait:
+                raise
+            print(f"  Rate limited — waiting {secs:.0f}s (total waited: {waited + secs:.0f}s)...")
+            time.sleep(secs)
+            waited += secs
+
+
+def _save_cache(samples: list[SingleTurnSample]) -> None:
+    data = [
+        {
+            "user_input": s.user_input,
+            "response": s.response,
+            "retrieved_contexts": s.retrieved_contexts,
+        }
+        for s in samples
+    ]
+    with open(_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    print(f"  Cached {len(data)} samples → {_CACHE_FILE}")
+
+
+def _load_cache() -> list[SingleTurnSample]:
+    with open(_CACHE_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+    return [
+        SingleTurnSample(
+            user_input=d["user_input"],
+            response=d["response"],
+            retrieved_contexts=d["retrieved_contexts"],
+        )
+        for d in data
+    ]
+
+
+def run_evaluation(
+    record_note: str | None = None,
+    subset: bool = False,
+    eval_only: bool = False,
+) -> dict:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        eval_llm = LangchainLLMWrapper(
-            ChatGroq(model="llama-3.3-70b-versatile", api_key=settings.GROQ_API_KEY)
-        )
+        gemini_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=settings.GOOGLE_API_KEY)
+        eval_llm = LangchainLLMWrapper(gemini_llm)
         eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
 
-    # strictness=1 → generates 1 synthetic question per sample, avoiding
-    # Groq's rejection of n>1 which caused answer_relevancy to always return 0.
+    if eval_only:
+        if not _CACHE_FILE.exists():
+            raise FileNotFoundError(
+                f"No cache at {_CACHE_FILE}. Run without --eval-only first to build it."
+            )
+        print(f"Loading cached samples from {_CACHE_FILE} ...")
+        samples = _load_cache()
+        skipped = 0
+        n_total = len(samples)
+    else:
+        eval_questions = load_eval_questions(subset=subset)
+        n_total = len(eval_questions)
+        samples = []
+        skipped = 0
+        for item in eval_questions:
+            namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
+            result = _run_query_with_retry(item["question"], namespaces, llm=gemini_llm)
+            if result["guardrail_blocked"]:
+                skipped += 1
+                continue
+
+            retriever = get_rbac_retriever(namespaces)
+            candidates = retriever.invoke(item["question"])
+            docs = rerank_docs(item["question"], candidates, settings.RETRIEVAL_TOP_K)
+            retrieved_contexts = [doc.page_content for doc in docs]
+
+            samples.append(SingleTurnSample(
+                user_input=item["question"],
+                response=result["answer"],
+                retrieved_contexts=retrieved_contexts,
+            ))
+            time.sleep(2)
+
+        _save_cache(samples)
+
+    if not samples:
+        print("No samples to evaluate (all blocked by guardrails).")
+        return {}
+
     metrics = [
         Faithfulness(llm=eval_llm),
         AnswerRelevancy(llm=eval_llm, embeddings=eval_embeddings, strictness=1),
     ]
-
-    samples = []
-    for item in EVAL_QUESTIONS:
-        namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
-        result = run_query(item["question"], namespaces)
-        if result["guardrail_blocked"]:
-            continue
-
-        retriever = get_rbac_retriever(namespaces)
-        docs = retriever.invoke(item["question"])
-        retrieved_contexts = [doc.page_content for doc in docs]
-
-        samples.append(SingleTurnSample(
-            user_input=item["question"],
-            response=result["answer"],
-            retrieved_contexts=retrieved_contexts,
-        ))
 
     scores = evaluate(
         dataset=EvaluationDataset(samples=samples),
@@ -76,11 +141,63 @@ def run_evaluation() -> None:
         embeddings=eval_embeddings,
     )
     df = scores.to_pandas()
+    faithfulness = df["faithfulness"].mean()
+    answer_relevancy = df["answer_relevancy"].mean()
+
     print("\n=== RAGAS Evaluation Results ===")
-    print(f"  faithfulness    : {df['faithfulness'].mean():.4f}")
-    print(f"  answer_relevancy: {df['answer_relevancy'].mean():.4f}")
+    print(f"  questions evaluated : {len(samples)} / {n_total} ({skipped} skipped)")
+    print(f"  faithfulness        : {faithfulness:.4f}")
+    print(f"  answer_relevancy    : {answer_relevancy:.4f}")
     print("================================\n")
+
+    result_data = {
+        "faithfulness": faithfulness,
+        "answer_relevancy": answer_relevancy,
+        "n_questions": len(samples),
+    }
+
+    if record_note is not None:
+        _append_eval_results(faithfulness, answer_relevancy, len(samples), record_note)
+
+    return result_data
+
+
+def _append_eval_results(
+    faithfulness: float, answer_relevancy: float, n_questions: int, note: str
+) -> None:
+    results_file = Path(__file__).parents[2] / "EVAL_RESULTS.md"
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entry = (
+        f"\n## {timestamp} — {note}\n"
+        f"- faithfulness:     {faithfulness:.4f}\n"
+        f"- answer_relevancy: {answer_relevancy:.4f}\n"
+        f"- questions:        {n_questions}\n"
+        f"- note: {note}\n"
+    )
+    with open(results_file, "a", encoding="utf-8") as f:
+        f.write(entry)
+    print(f"Results appended to {results_file}")
 
 
 if __name__ == "__main__":
-    run_evaluation()
+    parser = argparse.ArgumentParser(description="Run RAGAS evaluation")
+    parser.add_argument(
+        "--record",
+        metavar="NOTE",
+        default=None,
+        help="Append results to EVAL_RESULTS.md with this note",
+    )
+    parser.add_argument(
+        "--subset",
+        action="store_true",
+        default=False,
+        help="Use eval_questions_subset.json instead of the full 50-question set",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        default=False,
+        help="Skip RAG queries; score from cached eval_samples_cache.json",
+    )
+    args = parser.parse_args()
+    run_evaluation(record_note=args.record, subset=args.subset, eval_only=args.eval_only)

@@ -6,6 +6,7 @@ from jose import JWTError
 from pydantic import BaseModel
 
 from src.api.limiter import limiter
+from src.auth.denylist import is_revoked
 from src.auth.jwt import decode_token
 from src.auth.rbac import get_allowed_namespaces
 from src.monitoring.langsmith_setup import log_feedback
@@ -32,6 +33,8 @@ def _get_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> d
         payload = decode_token(credentials.credentials)
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if is_revoked(payload.get("jti", "")):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
     return {"username": payload["sub"], "role": payload["role"]}
 
 

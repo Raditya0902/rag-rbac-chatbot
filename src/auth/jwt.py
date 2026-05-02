@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from jose import jwt
@@ -7,7 +8,12 @@ from src.config import settings
 
 def create_access_token(username: str, role: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
-    payload = {"sub": username, "role": role, "exp": expire}
+    payload = {
+        "sub": username,
+        "role": role,
+        "exp": expire,
+        "jti": str(uuid.uuid4()),  # unique token ID — used for the denylist
+    }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 

@@ -31,5 +31,6 @@ resources/vectorstore/
 # Planning docs
 rag-project-plan.md
 
-# Unused scaffolding
-app/
+# Generated eval artifacts — rebuild with ragas_eval.py
+eval_samples_cache.json
+ingest_manifest.json

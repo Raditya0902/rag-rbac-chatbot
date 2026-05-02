@@ -1,10 +1,10 @@
 import time
 import uuid
-from collections import defaultdict
 from collections.abc import Generator
 from pathlib import Path
 
 import structlog
+from langchain_community.chat_message_histories import RedisChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_groq import ChatGroq
@@ -13,12 +13,11 @@ from src.config import settings
 from src.guardrails.input_guard import check_input, sanitize
 from src.guardrails.output_guard import redact_pii
 from src.rag.prompts import CONDENSE_PROMPT, RAG_PROMPT
-from src.vectorstore.store import get_rbac_retriever
+from src.vectorstore.store import get_rbac_retriever, rerank_docs
 
-# In-memory history store keyed by session_id.
-# Each value is a list of (human_text, ai_text) turn tuples.
-# Note: single-process only — use Redis or a DB for multi-worker deployments.
-_histories: dict[str, list[tuple[str, str]]] = defaultdict(list)
+# Session TTL: keep conversation history for 2 hours (in seconds).
+_SESSION_TTL = 7200
+# Keep only the last 5 turns (10 messages) in context to bound prompt size.
 _HISTORY_WINDOW = 5
 
 log = structlog.get_logger()
@@ -43,31 +42,57 @@ def _get_llm() -> ChatGroq:
     return ChatGroq(model=settings.LLM_MODEL, api_key=settings.GROQ_API_KEY)
 
 
-def _to_messages(turns: list[tuple[str, str]]) -> list:
-    msgs = []
-    for human, ai in turns:
-        msgs.append(HumanMessage(content=human))
-        msgs.append(AIMessage(content=ai))
-    return msgs
+def _get_history(session_id: str) -> RedisChatMessageHistory:
+    """Return a Redis-backed message history for this session.
+
+    Falls back gracefully — if Redis is unreachable the RedisChatMessageHistory
+    constructor raises; callers catch this and continue with an empty history.
+    """
+    return RedisChatMessageHistory(
+        session_id=session_id,
+        url=settings.REDIS_URL,
+        ttl=_SESSION_TTL,
+    )
 
 
-def _condense(question: str, history: list[tuple[str, str]]) -> str:
+def _load_messages(session_id: str) -> list:
+    """Load the last _HISTORY_WINDOW turns from Redis, or [] on failure."""
+    try:
+        history = _get_history(session_id)
+        msgs = history.messages
+        # Each turn = 1 HumanMessage + 1 AIMessage; window covers last N turns.
+        return msgs[-(  _HISTORY_WINDOW * 2):]
+    except Exception as exc:
+        log.warning("history_load_failed", session_id=session_id, error=str(exc))
+        return []
+
+
+def _save_turn(session_id: str, human: str, ai: str) -> None:
+    """Append a turn to Redis history; silently skip on failure."""
+    try:
+        history = _get_history(session_id)
+        history.add_messages([HumanMessage(content=human), AIMessage(content=ai)])
+    except Exception as exc:
+        log.warning("history_save_failed", session_id=session_id, error=str(exc))
+
+
+def _condense(question: str, history_messages: list) -> str:
     """Rewrite a follow-up question into a standalone question for retrieval."""
-    if not history:
+    if not history_messages:
         return question
     condensed = (CONDENSE_PROMPT | _get_llm() | StrOutputParser()).invoke({
-        "history": _to_messages(history),
+        "history": history_messages,
         "question": question,
     })
     return condensed.strip()
 
 
-def run_query(query: str, allowed_namespaces: list[str], session_id: str | None = None) -> dict:
+def run_query(query: str, allowed_namespaces: list[str], session_id: str | None = None, llm=None) -> dict:
     session_id = session_id or str(uuid.uuid4())
     query_preview = query[:80]
 
-    history = _histories[session_id]
-    is_ok, reason = check_input(query, is_followup=bool(history))
+    history_messages = _load_messages(session_id)
+    is_ok, reason = check_input(query, is_followup=bool(history_messages))
     if not is_ok:
         log.warning(
             "guardrail_blocked",
@@ -79,25 +104,25 @@ def run_query(query: str, allowed_namespaces: list[str], session_id: str | None 
                 "guardrail_blocked": True, "block_reason": reason}
 
     sanitized = sanitize(query)
-    retrieval_query = _condense(sanitized, history)
+    retrieval_query = _condense(sanitized, history_messages)
 
     retriever = get_rbac_retriever(allowed_namespaces)
-    docs = retriever.invoke(retrieval_query)
+    candidates = retriever.invoke(retrieval_query)
+    docs = rerank_docs(retrieval_query, candidates, settings.RETRIEVAL_TOP_K)
     context = "\n\n".join(doc.page_content for doc in docs)
 
     run_id = uuid.uuid4()
     t0 = time.perf_counter()
 
-    answer_raw = (RAG_PROMPT | _get_llm() | StrOutputParser()).invoke(
-        {"context": context, "history": _to_messages(history), "input": sanitized},
+    answer_raw = (RAG_PROMPT | (llm or _get_llm()) | StrOutputParser()).invoke(
+        {"context": context, "history": history_messages, "input": sanitized},
         config={"run_id": run_id, "run_name": f"rag_{session_id}"},
     )
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 1)
     answer = redact_pii(answer_raw)
 
-    history.append((sanitized, answer))
-    _histories[session_id] = history[-_HISTORY_WINDOW:]
+    _save_turn(session_id, sanitized, answer)
 
     sources = list({
         _format_source(doc.metadata.get("namespace", ""), doc.metadata.get("source", ""))
@@ -131,8 +156,8 @@ def stream_query(
     session_id = session_id or str(uuid.uuid4())
     query_preview = query[:80]
 
-    history = _histories[session_id]
-    is_ok, reason = check_input(query, is_followup=bool(history))
+    history_messages = _load_messages(session_id)
+    is_ok, reason = check_input(query, is_followup=bool(history_messages))
     if not is_ok:
         log.warning(
             "guardrail_blocked",
@@ -144,10 +169,11 @@ def stream_query(
         return
 
     sanitized = sanitize(query)
-    retrieval_query = _condense(sanitized, history)
+    retrieval_query = _condense(sanitized, history_messages)
 
     retriever = get_rbac_retriever(allowed_namespaces)
-    docs = retriever.invoke(retrieval_query)
+    candidates = retriever.invoke(retrieval_query)
+    docs = rerank_docs(retrieval_query, candidates, settings.RETRIEVAL_TOP_K)
     context = "\n\n".join(doc.page_content for doc in docs)
 
     run_id = uuid.uuid4()
@@ -156,15 +182,14 @@ def stream_query(
     t0 = time.perf_counter()
     full_answer = ""
     for chunk in (RAG_PROMPT | _get_llm() | StrOutputParser()).stream(
-        {"context": context, "history": _to_messages(history), "input": sanitized},
+        {"context": context, "history": history_messages, "input": sanitized},
         config={"run_id": run_id, "run_name": f"rag_{session_id}"},
     ):
         full_answer += chunk
         yield chunk
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 1)
-    history.append((sanitized, redact_pii(full_answer)))
-    _histories[session_id] = history[-_HISTORY_WINDOW:]
+    _save_turn(session_id, sanitized, redact_pii(full_answer))
 
     sources = "|".join({
         _format_source(doc.metadata.get("namespace", ""), doc.metadata.get("source", ""))

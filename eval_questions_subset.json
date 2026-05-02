@@ -1,0 +1,127 @@
+[
+  {
+    "question": "What are the five core values of FinSolve Technologies?",
+    "role": "General",
+    "type": "factual"
+  },
+  {
+    "question": "How many days of sick leave are employees entitled to per year?",
+    "role": "General",
+    "type": "factual"
+  },
+  {
+    "question": "What support and check-ins are provided to a new employee in their first month, and how do those connect to the probation objectives set during onboarding?",
+    "role": "General",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How does the company support employee growth and development?",
+    "role": "General",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current CEO of FinSolve Technologies?",
+    "role": "General",
+    "type": "no_answer"
+  },
+  {
+    "question": "What was FinSolve Technologies total revenue in Q1 2024?",
+    "role": "Finance",
+    "type": "factual"
+  },
+  {
+    "question": "What was the gross margin in Q2 2024?",
+    "role": "Finance",
+    "type": "factual"
+  },
+  {
+    "question": "How did revenue and gross margin trend across all four quarters of 2024, and what were the primary drivers of that progression?",
+    "role": "Finance",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How is the company performing financially overall?",
+    "role": "Finance",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What dividends were paid to shareholders in fiscal year 2024?",
+    "role": "Finance",
+    "type": "no_answer"
+  },
+  {
+    "question": "Which cloud provider does FinSolve use for its core infrastructure?",
+    "role": "Engineering",
+    "type": "factual"
+  },
+  {
+    "question": "What database technologies are used in FinSolve's data layer?",
+    "role": "Engineering",
+    "type": "factual"
+  },
+  {
+    "question": "How does the authentication service integrate with the API gateway, and what authentication and authorization standards does it rely on?",
+    "role": "Engineering",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How does the engineering team deploy new features to production?",
+    "role": "Engineering",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the current total headcount of the engineering department?",
+    "role": "Engineering",
+    "type": "no_answer"
+  },
+  {
+    "question": "What was the total marketing spend in Q4 2024?",
+    "role": "Marketing",
+    "type": "factual"
+  },
+  {
+    "question": "What was the customer acquisition target for Q1 2024?",
+    "role": "Marketing",
+    "type": "factual"
+  },
+  {
+    "question": "How did the marketing strategy and budget allocation evolve from Q1 to Q4 2024 in terms of target markets and channel mix?",
+    "role": "Marketing",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How is the marketing team performing this year?",
+    "role": "Marketing",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current head of the marketing department?",
+    "role": "Marketing",
+    "type": "no_answer"
+  },
+  {
+    "question": "How many days of annual privilege leave are employees entitled to each year?",
+    "role": "HR",
+    "type": "factual"
+  },
+  {
+    "question": "What is the onboarding process for a new employee on their first day at the company?",
+    "role": "HR",
+    "type": "factual"
+  },
+  {
+    "question": "An employee who has completed 4 years of service is leaving the company \u2014 what exit benefits and provisions apply, distinguishing between statutory entitlements and company-specific policies?",
+    "role": "HR",
+    "type": "multi_hop"
+  },
+  {
+    "question": "What happens when an employee is sick and needs time off?",
+    "role": "HR",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current HR Director at FinSolve Technologies?",
+    "role": "HR",
+    "type": "no_answer"
+  }
+]

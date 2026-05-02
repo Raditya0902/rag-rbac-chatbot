@@ -1,0 +1,252 @@
+[
+  {
+    "question": "What are the five core values of FinSolve Technologies?",
+    "role": "General",
+    "type": "factual"
+  },
+  {
+    "question": "How many days of sick leave are employees entitled to per year?",
+    "role": "General",
+    "type": "factual"
+  },
+  {
+    "question": "What statutory benefits are included in the employee benefits package?",
+    "role": "General",
+    "type": "factual"
+  },
+  {
+    "question": "What support and check-ins are provided to a new employee in their first month, and how do those connect to the probation objectives set during onboarding?",
+    "role": "General",
+    "type": "multi_hop"
+  },
+  {
+    "question": "If an employee exhausts all paid leave and then faces a personal emergency, what leave options remain available according to company policy?",
+    "role": "General",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How does the company support employee growth and development?",
+    "role": "General",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What are the rules around working from home?",
+    "role": "General",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current CEO of FinSolve Technologies?",
+    "role": "General",
+    "type": "no_answer"
+  },
+  {
+    "question": "What is the company's stock ticker symbol on the exchange?",
+    "role": "General",
+    "type": "no_answer"
+  },
+  {
+    "question": "What are the employee benefits?",
+    "role": "General",
+    "type": "edge_case"
+  },
+  {
+    "question": "What was FinSolve Technologies total revenue in Q1 2024?",
+    "role": "Finance",
+    "type": "factual"
+  },
+  {
+    "question": "What was the gross margin in Q2 2024?",
+    "role": "Finance",
+    "type": "factual"
+  },
+  {
+    "question": "By what percentage did net income grow year-over-year in Q1 2024?",
+    "role": "Finance",
+    "type": "factual"
+  },
+  {
+    "question": "How did revenue and gross margin trend across all four quarters of 2024, and what were the primary drivers of that progression?",
+    "role": "Finance",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How did the marketing spend and revenue target for Q4 2024 compare to those in Q1 2024, and what does the difference imply about the company's growth strategy?",
+    "role": "Finance",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How is the company performing financially overall?",
+    "role": "Finance",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What are the biggest cost pressures facing the business?",
+    "role": "Finance",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What dividends were paid to shareholders in fiscal year 2024?",
+    "role": "Finance",
+    "type": "no_answer"
+  },
+  {
+    "question": "What is the current share price of FinSolve Technologies on the stock market?",
+    "role": "Finance",
+    "type": "no_answer"
+  },
+  {
+    "question": "What were the Q3 2024 quarterly revenue figures?",
+    "role": "Finance",
+    "type": "edge_case"
+  },
+  {
+    "question": "Which cloud provider does FinSolve use for its core infrastructure?",
+    "role": "Engineering",
+    "type": "factual"
+  },
+  {
+    "question": "What database technologies are used in FinSolve's data layer?",
+    "role": "Engineering",
+    "type": "factual"
+  },
+  {
+    "question": "What programming languages are used to build the mobile applications?",
+    "role": "Engineering",
+    "type": "factual"
+  },
+  {
+    "question": "How does the authentication service integrate with the API gateway, and what authentication and authorization standards does it rely on?",
+    "role": "Engineering",
+    "type": "multi_hop"
+  },
+  {
+    "question": "What is the relationship between the microservices architecture and the Kubernetes-based deployment approach, and how do they together support scalability?",
+    "role": "Engineering",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How does the engineering team deploy new features to production?",
+    "role": "Engineering",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What software development process does the engineering team use?",
+    "role": "Engineering",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the current total headcount of the engineering department?",
+    "role": "Engineering",
+    "type": "no_answer"
+  },
+  {
+    "question": "What is the engineering department's annual budget for 2025?",
+    "role": "Engineering",
+    "type": "no_answer"
+  },
+  {
+    "question": "How does FinSolve handle API authentication and rate limiting?",
+    "role": "Engineering",
+    "type": "edge_case"
+  },
+  {
+    "question": "What was the total marketing spend in Q4 2024?",
+    "role": "Marketing",
+    "type": "factual"
+  },
+  {
+    "question": "What was the customer acquisition target for Q1 2024?",
+    "role": "Marketing",
+    "type": "factual"
+  },
+  {
+    "question": "What ROI target was set for Q4 2024 marketing campaigns?",
+    "role": "Marketing",
+    "type": "factual"
+  },
+  {
+    "question": "How did the marketing strategy and budget allocation evolve from Q1 to Q4 2024 in terms of target markets and channel mix?",
+    "role": "Marketing",
+    "type": "multi_hop"
+  },
+  {
+    "question": "What was the cost per acquisition in Q1 2024, how was it calculated, and how did it compare to the Q4 2024 cost per acquisition?",
+    "role": "Marketing",
+    "type": "multi_hop"
+  },
+  {
+    "question": "How is the marketing team performing this year?",
+    "role": "Marketing",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What markets is the company targeting for growth?",
+    "role": "Marketing",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current head of the marketing department?",
+    "role": "Marketing",
+    "type": "no_answer"
+  },
+  {
+    "question": "Which individual social media post generated the highest revenue in 2024?",
+    "role": "Marketing",
+    "type": "no_answer"
+  },
+  {
+    "question": "What were the Q4 marketing results and customer acquisition outcomes?",
+    "role": "Marketing",
+    "type": "edge_case"
+  },
+  {
+    "question": "How many days of annual privilege leave are employees entitled to each year?",
+    "role": "HR",
+    "type": "factual"
+  },
+  {
+    "question": "What is the onboarding process for a new employee on their first day at the company?",
+    "role": "HR",
+    "type": "factual"
+  },
+  {
+    "question": "What is the minimum bonus percentage of basic salary as per the Payment of Bonus Act?",
+    "role": "HR",
+    "type": "factual"
+  },
+  {
+    "question": "An employee who has completed 4 years of service is leaving the company — what exit benefits and provisions apply, distinguishing between statutory entitlements and company-specific policies?",
+    "role": "HR",
+    "type": "multi_hop"
+  },
+  {
+    "question": "Walk me through the complete journey of a new hire from pre-joining through the end of their first month, covering all touchpoints described in the onboarding process.",
+    "role": "HR",
+    "type": "multi_hop"
+  },
+  {
+    "question": "What happens when an employee is sick and needs time off?",
+    "role": "HR",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the leave policy for employees?",
+    "role": "HR",
+    "type": "ambiguous"
+  },
+  {
+    "question": "What is the name of the current HR Director at FinSolve Technologies?",
+    "role": "HR",
+    "type": "no_answer"
+  },
+  {
+    "question": "What is the average salary for a mid-level software engineer at FinSolve Technologies?",
+    "role": "HR",
+    "type": "no_answer"
+  },
+  {
+    "question": "What is the maternity leave policy?",
+    "role": "HR",
+    "type": "edge_case"
+  }
+]
