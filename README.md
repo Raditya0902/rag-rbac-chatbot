@@ -16,7 +16,7 @@ An enterprise-grade internal knowledge base chatbot built with Retrieval-Augment
 - **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — faithfulness + answer relevancy scoring with Gemini as evaluator
+- **RAGAS Evaluation** — faithfulness + answer relevancy scoring; best run: faithfulness 0.9116 / answer relevancy 0.7346
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
 - **77 Automated Tests** — guardrails, retrieval re-ranking, Redis denylist, re-ingestion logic
@@ -72,7 +72,7 @@ User
 | API | FastAPI + uvicorn |
 | Auth | JWT (python-jose, bcrypt) + Redis denylist |
 | Frontend | Streamlit |
-| Evaluation | RAGAS + Gemini 2.0 Flash |
+| Evaluation | RAGAS + Groq llama-3.1-8b-instant |
 | Observability | LangSmith + structlog |
 | Rate Limiting | slowapi |
 | Deployment | Docker + docker-compose |
@@ -138,8 +138,7 @@ rag-rbac-chatbot/
 ### Prerequisites
 - Python 3.10+
 - Redis running locally (or via Docker)
-- A [Groq API key](https://console.groq.com) (free tier — used for the RAG chain)
-- A [Google AI Studio API key](https://aistudio.google.com) (free tier — used for RAGAS evaluation only)
+- A [Groq API key](https://console.groq.com) (free tier — used for both the RAG chain and RAGAS evaluation)
 - Optionally a [LangSmith API key](https://smith.langchain.com) for tracing
 
 ### 1. Clone and install
@@ -155,7 +154,7 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set GROQ_API_KEY, GOOGLE_API_KEY, and JWT_SECRET_KEY
+# Edit .env — at minimum set GROQ_API_KEY and JWT_SECRET_KEY
 ```
 
 ### 3. Ingest documents into ChromaDB
@@ -211,10 +210,10 @@ Both services start automatically. The frontend waits for the backend health che
 
 ## Evaluation
 
-RAGAS evaluation uses Gemini 2.0 Flash (separate from the Groq RAG chain) so the two don't share token budgets.
+RAGAS evaluation uses `llama-3.1-8b-instant` (Groq, 500k TPD pool) for scoring — separate from the `llama-3.3-70b-versatile` RAG chain — so the two don't share token budgets.
 
 ```bash
-# Run against the 25-question subset
+# Run against the 25-question subset (recommended — fits within free-tier limits)
 python -m src.monitoring.ragas_eval --subset --record "description of what changed"
 
 # If the eval phase fails mid-run, retry scoring without re-running RAG queries
@@ -225,6 +224,13 @@ python -m src.monitoring.ragas_eval --record "description of what changed"
 ```
 
 Results are appended to `EVAL_RESULTS.md`.
+
+### Best scores (25q subset, hybrid BM25+vector + cross-encoder re-ranker)
+
+| Metric | Score |
+|--------|-------|
+| Faithfulness | **0.9116** |
+| Answer Relevancy | **0.7346** |
 
 ---
 

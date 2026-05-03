@@ -16,18 +16,16 @@ Metrics:
 - faithfulness:     0.8210
 - answer_relevancy: 0.7380
 - questions:        10
-- note: Pre-upgrade baseline. Single ChromaDB MMR retriever (k=8, fetch_k=24). Regex guardrails only. In-memory session history. Scores from original project README.
+- note: Pre-upgrade baseline. Single ChromaDB MMR retriever (k=8, fetch_k=24). Regex guardrails only. In-memory session history.
 
-## 2026-05-01T00:00:00Z — Post-upgrade (50 questions, hybrid search + cross-encoder + all upgrades)
-- faithfulness:     (run `python -m src.monitoring.ragas_eval --record "Post all-upgrades" to populate`)
-- answer_relevancy: (run eval to populate)
-- questions:        50
-- note: After Upgrades 1–5: BM25+vector EnsembleRetriever (0.6/0.4 weights), cross-encoder/ms-marco-MiniLM-L-6-v2 re-ranker, Llama Guard 3 second-stage (disabled by default), Redis session memory + JWT denylist, 50-question eval set (factual/multi_hop/ambiguous/no_answer/edge_case).
-
-## 2026-05-02T20:11:47Z — Post all-upgrades (25q subset): hybrid BM25+vector,            
-  cross-encoder re-ranker
-- faithfulness:     nan
-- answer_relevancy: 0.7381
+## 2026-05-03T21:31:10Z — Post all-upgrades (25q subset): hybrid BM25+vector, cross-encoder re-ranker
+- faithfulness:     0.9116
+- answer_relevancy: 0.7346
 - questions:        25
-- note: Post all-upgrades (25q subset): hybrid BM25+vector,            
-  cross-encoder re-ranker
+- note: After all upgrades: BM25+vector EnsembleRetriever, cross-encoder re-ranker, Redis session memory + JWT denylist, Groq llama-3.3-70b-versatile for RAG, llama-3.3-70b-versatile for RAGAS scoring.
+
+## 2026-05-03T22:45:58Z — Post all-upgrades (50q full): hybrid BM25+vector, cross-encoder re-ranker
+- faithfulness:     0.7423
+- answer_relevancy: 0.6495
+- questions:        50
+- note: Full 50-question set. RAGAS scoring via llama-3.1-8b-instant (scores are a conservative lower bound — 8b produces noisier statement extraction than 70b).

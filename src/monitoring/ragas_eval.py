@@ -8,7 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -86,8 +86,7 @@ def run_evaluation(
 ) -> dict:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        gemini_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=settings.GOOGLE_API_KEY)
-        eval_llm = LangchainLLMWrapper(gemini_llm)
+        eval_llm = LangchainLLMWrapper(ChatGroq(model="llama-3.1-8b-instant", api_key=settings.GROQ_API_KEY))
         eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
 
     if eval_only:
@@ -106,7 +105,7 @@ def run_evaluation(
         skipped = 0
         for item in eval_questions:
             namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
-            result = _run_query_with_retry(item["question"], namespaces, llm=gemini_llm)
+            result = _run_query_with_retry(item["question"], namespaces, llm=None)
             if result["guardrail_blocked"]:
                 skipped += 1
                 continue
@@ -139,6 +138,7 @@ def run_evaluation(
         metrics=metrics,
         llm=eval_llm,
         embeddings=eval_embeddings,
+        batch_size=5,
     )
     df = scores.to_pandas()
     faithfulness = df["faithfulness"].mean()
