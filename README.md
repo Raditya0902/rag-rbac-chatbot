@@ -1,12 +1,12 @@
 # RAG RBAC Chatbot
 
-An enterprise-grade internal knowledge base chatbot built with Retrieval-Augmented Generation (RAG) and Role-Based Access Control (RBAC). Employees can only query documents from their own department — an Engineering employee cannot access Finance data, a Marketing employee cannot access HR records, and so on.
+An internal knowledge base chatbot with Retrieval-Augmented Generation (RAG) and Role-Based Access Control (RBAC). Employees can only query documents from their own department — an Engineering employee cannot access Finance data, a Marketing employee cannot access HR records, and so on.
 
 ---
 
 ## Features
 
-- **Role-Based Access Control** — retrieval is filtered at the vector store level per user role, not just the UI
+- **Role-Based Access Control** — both halves of retrieval (BM25 index and ChromaDB query) are restricted to the user's departments, and chat history is private to each user; tested per role against the real documents
 - **Hybrid Retrieval** — BM25 + vector (ChromaDB MMR) ensemble with cross-encoder re-ranking for higher precision
 - **JWT Authentication** — secure token-based auth with expiry and server-side token revocation (Redis denylist)
 - **Streaming Responses** — token-by-token streaming via Server-Sent Events (SSE)
@@ -16,10 +16,10 @@ An enterprise-grade internal knowledge base chatbot built with Retrieval-Augment
 - **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — 50 questions: faithfulness 0.9639 / answer relevancy 0.8572 on the 40 answerable ones, and 10/10 correct refusals on questions the documents can't answer (DeepSeek judge)
+- **RAGAS Evaluation** — 50 questions: faithfulness 0.9639 / answer relevancy 0.8572 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
-- **77 Automated Tests** — guardrails, retrieval re-ranking, Redis denylist, re-ingestion logic
+- **174 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
 - **Docker** — one-command deployment with health checks
 
 ---
@@ -72,7 +72,7 @@ User
 | API | FastAPI + uvicorn |
 | Auth | JWT (python-jose, bcrypt) + Redis denylist |
 | Frontend | Streamlit |
-| Evaluation | RAGAS + Groq llama-3.1-8b-instant |
+| Evaluation | RAGAS; judge LLM configurable (DeepSeek `deepseek-chat` or Groq Llama) |
 | Observability | LangSmith + structlog |
 | Rate Limiting | slowapi |
 | Deployment | Docker + docker-compose |
@@ -101,8 +101,11 @@ rag-rbac-chatbot/
 │   │   ├── loaders.py           # markdown + CSV loaders with MD5 hashing
 │   │   └── splitter.py          # recursive character splitter
 │   ├── monitoring/
+│   │   ├── judge.py             # RAGAS judge LLM (Groq or DeepSeek)
 │   │   ├── langsmith_setup.py   # feedback logging to LangSmith
-│   │   └── ragas_eval.py        # RAGAS faithfulness + answer relevancy
+│   │   ├── ragas_eval.py        # RAGAS faithfulness + answer relevancy
+│   │   ├── refusal.py           # refusal accuracy for no_answer questions
+│   │   └── score_report.py      # per-question scores by type and role
 │   ├── rag/
 │   │   ├── chain.py             # run_query + stream_query
 │   │   └── prompts.py           # RAG + condense prompts
@@ -113,10 +116,13 @@ rag-rbac-chatbot/
 ├── frontend/
 │   └── streamlit_app.py
 ├── tests/
-│   ├── test_guardrails.py       # 44 tests — injection, PII, domain filter
-│   ├── test_retrieval.py        # 9 tests — cross-encoder re-ranking
-│   ├── test_redis.py            # 11 tests — JWT denylist
-│   └── test_reingest.py         # 13 tests — incremental re-ingestion
+│   ├── test_rbac_isolation.py   # 60 tests — no role retrieves another department's chunks
+│   ├── test_session_isolation.py # 5 tests — chat history is private to its user
+│   ├── test_guardrails.py       # 49 tests — injection, PII, domain filter
+│   ├── test_retrieval.py        # 7 tests — cross-encoder re-ranking
+│   ├── test_redis.py            # 8 tests — JWT denylist
+│   ├── test_reingest.py         # 8 tests — incremental re-ingestion
+│   └── test_ragas_eval.py, …    # 37 tests — eval pipeline, judge, refusal and score reports
 ├── resources/
 │   └── data/                    # mock company documents
 │       ├── engineering/
@@ -138,7 +144,8 @@ rag-rbac-chatbot/
 ### Prerequisites
 - Python 3.11+
 - Redis running locally (or via Docker)
-- A [Groq API key](https://console.groq.com) (free tier — used for both the RAG chain and RAGAS evaluation)
+- A [Groq API key](https://console.groq.com) (free tier) for the RAG chain
+- For evaluation, a judge key: Groq (free) or [DeepSeek](https://platform.deepseek.com) (paid, a few cents per 50-question run); see [Evaluation](#evaluation)
 - Optionally a [LangSmith API key](https://smith.langchain.com) for tracing
 
 ### 1. Clone and install
@@ -249,7 +256,15 @@ Results are appended to `EVAL_RESULTS.md`.
 | Refusal accuracy (10 `no_answer`) | **10/10** |
 | False refusals (40 answerable) | **0/40** |
 
-Judge: `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions. Earlier entries in `EVAL_RESULTS.md` used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable. Scoring all 50 with RAGAS, refusals included, gives 0.7810 / 0.6931.
+Judge: `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions.
+
+#### What these scores do and don't show
+
+- **The answers predate the latest prompt change.** They were generated on 2026-05-03 and re-scored later with `--eval-only`. Retrieval and refusal logic are unchanged since then, but the RAG prompt now asks for complete-sentence answers (which a spot check suggests raises answer relevancy). A full re-run without `--eval-only` is pending.
+- **Part of the rise over older entries comes from how scores are counted.** The same answers score 0.7810 / 0.6931 when all 50, refusals included, go through RAGAS, because RAGAS gives a correct "I don't know" 0. Scoring the 10 `no_answer` questions by refusal instead gives 0.9639 / 0.8572. Earlier entries in `EVAL_RESULTS.md` also used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
+- **Refusal accuracy is an exact-sentence match.** 10/10 means the bot gave the prescribed refusal on those questions. It doesn't measure anything finer.
+- **The question set is small and self-written, and the judge is an LLM.** Treat the numbers as a regression check for this project, not a benchmark.
+- **RBAC isn't measured by RAGAS.** It's covered by `tests/test_rbac_isolation.py` and `tests/test_session_isolation.py`.
 
 ---
 
@@ -259,11 +274,14 @@ Judge: `deepseek-chat`, every sample scored. The set includes deliberately hard 
 pytest tests/ -v
 ```
 
-77 tests covering:
+174 tests covering:
+- RBAC isolation: for every role, the BM25 index and the ChromaDB query hold only that role's departments, checked with questions aimed at other departments (the ChromaDB tests skip if the store hasn't been ingested)
+- Chat-history isolation: two users sending the same session id get separate histories
 - Injection detection, off-topic filtering, follow-up handling, HTML sanitization, PII redaction
 - Cross-encoder re-ranking order and metadata preservation
 - Redis JWT denylist revocation and failure handling
 - Incremental re-ingestion change detection and MD5 hashing
+- Eval pipeline: judge selection, refusal scoring, per-question reports, unscored-sample handling
 
 ---
 

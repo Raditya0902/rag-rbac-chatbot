@@ -47,3 +47,4 @@ Metrics:
 - judge_provider:   deepseek
 - judge_model:      deepseek-chat
 - note: 50q full, deepseek-chat judge, no_answer scored by refusal accuracy
+- answers: cached from the 2026-05-03 50q run (pipeline before the 2026-11-21 complete-sentence prompt change); same answers as the entry above, only the scoring differs
