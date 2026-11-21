@@ -8,6 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+import pandas as pd
 from langchain_groq import ChatGroq
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import LangchainLLMWrapper
@@ -23,6 +24,21 @@ from src.vectorstore.store import get_embeddings, get_rbac_retriever, rerank_doc
 _QUESTIONS_FILE = Path(__file__).parents[2] / "eval_questions.json"
 _SUBSET_FILE = Path(__file__).parents[2] / "eval_questions_subset.json"
 _CACHE_FILE = Path(__file__).parents[2] / "eval_samples_cache.json"
+_RESULTS_FILE = Path(__file__).parents[2] / "EVAL_RESULTS.md"
+_METRIC_NAMES = ("faithfulness", "answer_relevancy")
+
+
+def summarize_scores(df: pd.DataFrame) -> dict:
+    """Mean of each metric over the samples RAGAS actually scored.
+
+    RAGAS returns NaN for a sample when the judge LLM's output can't be parsed
+    or the call fails. Those rows are excluded from the mean and counted
+    separately, so a partial run is never mistaken for a complete one.
+    """
+    return {
+        "means": {m: float(df[m].mean()) for m in _METRIC_NAMES},
+        "n_scored": {m: int(df[m].notna().sum()) for m in _METRIC_NAMES},
+    }
 
 
 def load_eval_questions(subset: bool = False) -> list[dict]:
@@ -140,32 +156,39 @@ def run_evaluation(
         embeddings=eval_embeddings,
         batch_size=5,
     )
-    df = scores.to_pandas()
-    faithfulness = df["faithfulness"].mean()
-    answer_relevancy = df["answer_relevancy"].mean()
+    summary = summarize_scores(scores.to_pandas())
+    means, n_scored = summary["means"], summary["n_scored"]
+    n_samples = len(samples)
+    is_complete = all(n == n_samples for n in n_scored.values())
 
     print("\n=== RAGAS Evaluation Results ===")
-    print(f"  questions evaluated : {len(samples)} / {n_total} ({skipped} skipped)")
-    print(f"  faithfulness        : {faithfulness:.4f}")
-    print(f"  answer_relevancy    : {answer_relevancy:.4f}")
+    print(f"  questions evaluated : {n_samples} / {n_total} ({skipped} skipped)")
+    for name in _METRIC_NAMES:
+        print(f"  {name:<20}: {means[name]:.4f}  (scored {n_scored[name]}/{n_samples})")
     print("================================\n")
 
     result_data = {
-        "faithfulness": faithfulness,
-        "answer_relevancy": answer_relevancy,
-        "n_questions": len(samples),
+        "faithfulness": means["faithfulness"],
+        "answer_relevancy": means["answer_relevancy"],
+        "n_questions": n_samples,
+        "n_scored": n_scored,
     }
 
-    if record_note is not None:
-        _append_eval_results(faithfulness, answer_relevancy, len(samples), record_note)
-
+    if record_note is None:
+        return result_data
+    if not is_complete:
+        print(
+            "Not recording to EVAL_RESULTS.md: some samples failed to score "
+            "(judge LLM error or rate limit). Re-run with --eval-only to retry."
+        )
+        return result_data
+    _append_eval_results(means["faithfulness"], means["answer_relevancy"], n_samples, record_note)
     return result_data
 
 
 def _append_eval_results(
     faithfulness: float, answer_relevancy: float, n_questions: int, note: str
 ) -> None:
-    results_file = Path(__file__).parents[2] / "EVAL_RESULTS.md"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = (
         f"\n## {timestamp} — {note}\n"
@@ -174,9 +197,9 @@ def _append_eval_results(
         f"- questions:        {n_questions}\n"
         f"- note: {note}\n"
     )
-    with open(results_file, "a", encoding="utf-8") as f:
+    with open(_RESULTS_FILE, "a", encoding="utf-8") as f:
         f.write(entry)
-    print(f"Results appended to {results_file}")
+    print(f"Results appended to {_RESULTS_FILE}")
 
 
 if __name__ == "__main__":

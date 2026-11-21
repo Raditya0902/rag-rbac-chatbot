@@ -13,13 +13,14 @@ wheels/
 .env
 
 # ChromaDB — regenerate with: python -m src.ingestion.ingest
-vectorstore/
+/vectorstore/
 resources/vectorstore/
 
 # IDE & OS
 .DS_Store
 .idea/
 *.lock
+!uv.lock
 .python-version
 
 # Claude Code

@@ -3,7 +3,7 @@ name = "rag-rbac-chatbot"
 version = "0.1.0"
 description = "Internal company chatbot with RBAC, guardrails, and LangSmith monitoring"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard]>=0.115.12",
     "uvicorn[standard]>=0.29.0",

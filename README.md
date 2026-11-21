@@ -136,7 +136,7 @@ rag-rbac-chatbot/
 ## Setup
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.11+
 - Redis running locally (or via Docker)
 - A [Groq API key](https://console.groq.com) (free tier — used for both the RAG chain and RAGAS evaluation)
 - Optionally a [LangSmith API key](https://smith.langchain.com) for tracing
