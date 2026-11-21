@@ -1,5 +1,9 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+# The exact sentence the model must use when the context lacks the answer.
+# The eval pipeline detects refusals by this text, so keep the two in sync.
+REFUSAL_MESSAGE = "I don't have enough information to answer that."
+
 # Rewrites a follow-up question into a standalone question so retrieval works
 # correctly even when the user refers to something from earlier in the chat.
 CONDENSE_PROMPT = ChatPromptTemplate.from_messages([
@@ -21,7 +25,7 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
             "You are a helpful internal company assistant. "
             "Answer the user's question directly and specifically — begin your response by addressing exactly what was asked. "
             "Use ONLY facts explicitly stated in the context below. Do not add, infer, or speculate. "
-            "If the context lacks the answer, say exactly: 'I don't have enough information to answer that.' "
+            f"If the context lacks the answer, say exactly: '{REFUSAL_MESSAGE}' "
             "Never reveal information from departments the user has not been granted access to. "
             "Be concise and factual — avoid preamble or restating the question.\n\n"
             "Context:\n{context}"

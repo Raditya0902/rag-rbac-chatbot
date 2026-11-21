@@ -28,9 +28,12 @@ def _run_with_scores(tmp_path, rows, record_note=None, chat_groq=None, **kwargs)
     results.write_text("# log\n")
     _write_cache(cache, len(rows))
     fake_result = MagicMock()
-    fake_result.to_pandas.return_value = pd.DataFrame(rows)
+    fake_result.to_pandas.return_value = pd.DataFrame(
+        [{"user_input": f"q{i}", **row} for i, row in enumerate(rows)]
+    )
     with patch.object(ragas_eval, "_CACHE_FILE", cache), \
          patch.object(ragas_eval, "_RESULTS_FILE", results), \
+         patch.object(ragas_eval, "_SCORES_FILE", tmp_path / "eval_scores.json"), \
          patch.object(judge, "ChatGroq", chat_groq or MagicMock()), \
          patch.object(judge, "ChatOpenAI", MagicMock()), \
          patch.object(judge.settings, "GROQ_API_KEY", "groq-test-key"), \
@@ -128,3 +131,82 @@ def test_recorded_entry_names_judge_model(tmp_path):
 
     assert "- judge_provider:   deepseek" in log
     assert "- judge_model:      judge-x" in log
+
+
+def test_writes_per_question_scores_with_judge(tmp_path):
+    rows = [
+        {"faithfulness": 0.8, "answer_relevancy": 0.6},
+        {"faithfulness": NAN, "answer_relevancy": 0.4},
+    ]
+
+    _run_with_scores(tmp_path, rows, judge_provider="deepseek", judge_model="judge-x")
+
+    report = json.loads((tmp_path / "eval_scores.json").read_text())
+    assert report["judge_provider"] == "deepseek"
+    assert report["judge_model"] == "judge-x"
+    assert [r["question"] for r in report["per_question"]] == ["q0", "q1"]
+    assert report["per_question"][1]["faithfulness"] is None
+    assert "by_type" in report and "by_role" in report
+
+
+def test_no_answer_questions_get_refusal_scoring_not_ragas(tmp_path):
+    from src.rag.prompts import REFUSAL_MESSAGE
+
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps([
+        {"user_input": "leave?", "response": "12 days.", "retrieved_contexts": ["c"]},
+        {"user_input": "ceo?", "response": REFUSAL_MESSAGE, "retrieved_contexts": ["c"]},
+    ]))
+    results = tmp_path / "EVAL_RESULTS.md"
+    results.write_text("# log\n")
+    meta = {
+        "leave?": {"type": "factual", "role": "HR"},
+        "ceo?": {"type": "no_answer", "role": "HR"},
+    }
+    fake_result = MagicMock()
+    fake_result.to_pandas.return_value = pd.DataFrame(
+        [{"user_input": "leave?", "faithfulness": 1.0, "answer_relevancy": 0.9}]
+    )
+    with patch.object(ragas_eval, "_CACHE_FILE", cache), \
+         patch.object(ragas_eval, "_RESULTS_FILE", results), \
+         patch.object(ragas_eval, "_SCORES_FILE", tmp_path / "eval_scores.json"), \
+         patch.object(ragas_eval, "_load_question_meta", return_value=meta), \
+         patch.object(judge, "ChatGroq", MagicMock()), \
+         patch.object(judge.settings, "GROQ_API_KEY", "groq-test-key"), \
+         patch.object(ragas_eval, "get_embeddings", MagicMock()), \
+         patch.object(ragas_eval, "evaluate", return_value=fake_result) as evaluate:
+        out = ragas_eval.run_evaluation(eval_only=True, record_note="refusal run")
+
+    scored = evaluate.call_args.kwargs["dataset"].samples
+    assert [s.user_input for s in scored] == ["leave?"]
+    assert out["faithfulness"] == pytest.approx(1.0)
+    assert out["n_questions"] == 2
+    assert out["refusal"]["accuracy"] == pytest.approx(1.0)
+    assert out["refusal"]["false_refusals"] == 0
+    log = results.read_text()
+    assert "- refusal_accuracy: 1/1" in log
+    assert "- false_refusals:   0/1" in log
+    report = json.loads((tmp_path / "eval_scores.json").read_text())
+    assert report["refusal"]["correct"] == 1
+
+
+def test_run_with_only_no_answer_questions_is_not_recorded(tmp_path):
+    from src.rag.prompts import REFUSAL_MESSAGE
+
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps(
+        [{"user_input": "ceo?", "response": REFUSAL_MESSAGE, "retrieved_contexts": ["c"]}]
+    ))
+    results = tmp_path / "EVAL_RESULTS.md"
+    results.write_text("# log\n")
+    with patch.object(ragas_eval, "_CACHE_FILE", cache), \
+         patch.object(ragas_eval, "_RESULTS_FILE", results), \
+         patch.object(ragas_eval, "_SCORES_FILE", tmp_path / "eval_scores.json"), \
+         patch.object(ragas_eval, "_load_question_meta",
+                      return_value={"ceo?": {"type": "no_answer", "role": "HR"}}), \
+         patch.object(ragas_eval, "evaluate") as evaluate:
+        out = ragas_eval.run_evaluation(eval_only=True, record_note="only refusals")
+
+    evaluate.assert_not_called()
+    assert out["refusal"]["accuracy"] == pytest.approx(1.0)
+    assert "only refusals" not in results.read_text()

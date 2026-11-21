@@ -37,3 +37,13 @@ Metrics:
 - judge_provider:   deepseek
 - judge_model:      deepseek-chat
 - note: 50q full, re-scored with deepseek-chat judge (cached answers)
+
+## 2026-11-21T09:56:36Z — 50q full, deepseek-chat judge, no_answer scored by refusal accuracy
+- faithfulness:     0.9639
+- answer_relevancy: 0.8572
+- questions:        50 (40 answerable scored by RAGAS, 10 no_answer)
+- refusal_accuracy: 10/10
+- false_refusals:   0/40
+- judge_provider:   deepseek
+- judge_model:      deepseek-chat
+- note: 50q full, deepseek-chat judge, no_answer scored by refusal accuracy

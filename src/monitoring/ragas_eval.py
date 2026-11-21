@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import time
 import warnings
@@ -18,6 +19,8 @@ from ragas.metrics._answer_relevance import AnswerRelevancy
 from src.auth.rbac import ROLE_NAMESPACE_MAP
 from src.config import settings
 from src.monitoring.judge import build_judge_chat_model, resolve_judge
+from src.monitoring.refusal import split_by_answerability, summarize_refusals
+from src.monitoring.score_report import METRIC_NAMES, format_breakdown, write_score_report
 from src.rag.chain import run_query
 from src.vectorstore.store import get_embeddings, get_rbac_retriever, rerank_docs
 
@@ -25,7 +28,7 @@ _QUESTIONS_FILE = Path(__file__).parents[2] / "eval_questions.json"
 _SUBSET_FILE = Path(__file__).parents[2] / "eval_questions_subset.json"
 _CACHE_FILE = Path(__file__).parents[2] / "eval_samples_cache.json"
 _RESULTS_FILE = Path(__file__).parents[2] / "EVAL_RESULTS.md"
-_METRIC_NAMES = ("faithfulness", "answer_relevancy")
+_SCORES_FILE = Path(__file__).parents[2] / "eval_scores.json"
 
 
 def summarize_scores(df: pd.DataFrame) -> dict:
@@ -36,9 +39,15 @@ def summarize_scores(df: pd.DataFrame) -> dict:
     separately, so a partial run is never mistaken for a complete one.
     """
     return {
-        "means": {m: float(df[m].mean()) for m in _METRIC_NAMES},
-        "n_scored": {m: int(df[m].notna().sum()) for m in _METRIC_NAMES},
+        "means": {m: float(df[m].mean()) if len(df) else None for m in METRIC_NAMES},
+        "n_scored": {m: int(df[m].notna().sum()) for m in METRIC_NAMES},
     }
+
+
+def _load_question_meta() -> dict[str, dict]:
+    """Map each eval question's text to its type and role."""
+    with open(_QUESTIONS_FILE, encoding="utf-8") as f:
+        return {q["question"]: {"type": q["type"], "role": q["role"]} for q in json.load(f)}
 
 
 def load_eval_questions(subset: bool = False) -> list[dict]:
@@ -95,6 +104,85 @@ def _load_cache() -> list[SingleTurnSample]:
     ]
 
 
+def _collect_samples(eval_only: bool, subset: bool) -> tuple[list[SingleTurnSample], int, int]:
+    """Return (samples, n_total, n_guardrail_skipped), from cache or by querying the RAG chain."""
+    if eval_only:
+        if not _CACHE_FILE.exists():
+            raise FileNotFoundError(
+                f"No cache at {_CACHE_FILE}. Run without --eval-only first to build it."
+            )
+        print(f"Loading cached samples from {_CACHE_FILE} ...")
+        samples = _load_cache()
+        return samples, len(samples), 0
+
+    eval_questions = load_eval_questions(subset=subset)
+    samples = []
+    skipped = 0
+    for item in eval_questions:
+        namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
+        result = _run_query_with_retry(item["question"], namespaces, llm=None)
+        if result["guardrail_blocked"]:
+            skipped += 1
+            continue
+
+        retriever = get_rbac_retriever(namespaces)
+        candidates = retriever.invoke(item["question"])
+        docs = rerank_docs(item["question"], candidates, settings.RETRIEVAL_TOP_K)
+        samples.append(SingleTurnSample(
+            user_input=item["question"],
+            response=result["answer"],
+            retrieved_contexts=[doc.page_content for doc in docs],
+        ))
+        time.sleep(2)
+
+    _save_cache(samples)
+    return samples, len(eval_questions), skipped
+
+
+def _score_with_ragas(samples: list[SingleTurnSample], judge_provider: str, judge_model: str) -> pd.DataFrame:
+    """Score samples with RAGAS faithfulness and answer relevancy; one row per sample."""
+    if not samples:
+        return pd.DataFrame(columns=["user_input", *METRIC_NAMES])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        eval_llm = LangchainLLMWrapper(build_judge_chat_model(judge_provider, judge_model))
+        eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
+    scores = evaluate(
+        dataset=EvaluationDataset(samples=samples),
+        metrics=[
+            Faithfulness(llm=eval_llm),
+            AnswerRelevancy(llm=eval_llm, embeddings=eval_embeddings, strictness=1),
+        ],
+        llm=eval_llm,
+        embeddings=eval_embeddings,
+        batch_size=5,
+    )
+    return scores.to_pandas()
+
+
+def _fmt_ratio(numerator: int, denominator: int) -> str:
+    return f"{numerator}/{denominator}"
+
+
+def _print_results(result: dict, n_total: int, skipped: int) -> None:
+    refusal = result["refusal"]
+    n_answerable = refusal["n_answerable"]
+    print("\n=== RAGAS Evaluation Results ===")
+    print(f"  questions evaluated : {result['n_questions']} / {n_total} ({skipped} skipped)")
+    print(f"  RAGAS (answerable)  : {n_answerable} questions")
+    for name in METRIC_NAMES:
+        value = result[name]
+        shown = "n/a" if value is None or math.isnan(value) else f"{value:.4f}"
+        print(f"    {name:<18}: {shown}  (scored {result['n_scored'][name]}/{n_answerable})")
+    print(f"  refusal accuracy    : {_fmt_ratio(refusal['correct'], refusal['n_no_answer'])} no_answer questions refused")
+    print(f"  false refusals      : {_fmt_ratio(refusal['false_refusals'], n_answerable)} answerable questions refused")
+    for question in refusal["missed"]:
+        print(f"    missed refusal: {question[:80]}")
+    for question in refusal["false_refusal_questions"]:
+        print(f"    false refusal : {question[:80]}")
+    print("================================\n")
+
+
 def run_evaluation(
     record_note: str | None = None,
     subset: bool = False,
@@ -104,113 +192,66 @@ def run_evaluation(
 ) -> dict:
     judge_provider, judge_model = resolve_judge(judge_provider, judge_model)
     print(f"Judge: {judge_provider}/{judge_model}")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        eval_llm = LangchainLLMWrapper(build_judge_chat_model(judge_provider, judge_model))
-        eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
 
-    if eval_only:
-        if not _CACHE_FILE.exists():
-            raise FileNotFoundError(
-                f"No cache at {_CACHE_FILE}. Run without --eval-only first to build it."
-            )
-        print(f"Loading cached samples from {_CACHE_FILE} ...")
-        samples = _load_cache()
-        skipped = 0
-        n_total = len(samples)
-    else:
-        eval_questions = load_eval_questions(subset=subset)
-        n_total = len(eval_questions)
-        samples = []
-        skipped = 0
-        for item in eval_questions:
-            namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
-            result = _run_query_with_retry(item["question"], namespaces, llm=None)
-            if result["guardrail_blocked"]:
-                skipped += 1
-                continue
-
-            retriever = get_rbac_retriever(namespaces)
-            candidates = retriever.invoke(item["question"])
-            docs = rerank_docs(item["question"], candidates, settings.RETRIEVAL_TOP_K)
-            retrieved_contexts = [doc.page_content for doc in docs]
-
-            samples.append(SingleTurnSample(
-                user_input=item["question"],
-                response=result["answer"],
-                retrieved_contexts=retrieved_contexts,
-            ))
-            time.sleep(2)
-
-        _save_cache(samples)
-
+    samples, n_total, skipped = _collect_samples(eval_only, subset)
     if not samples:
         print("No samples to evaluate (all blocked by guardrails).")
         return {}
 
-    metrics = [
-        Faithfulness(llm=eval_llm),
-        AnswerRelevancy(llm=eval_llm, embeddings=eval_embeddings, strictness=1),
-    ]
-
-    scores = evaluate(
-        dataset=EvaluationDataset(samples=samples),
-        metrics=metrics,
-        llm=eval_llm,
-        embeddings=eval_embeddings,
-        batch_size=5,
-    )
-    summary = summarize_scores(scores.to_pandas())
-    means, n_scored = summary["means"], summary["n_scored"]
-    n_samples = len(samples)
-    is_complete = all(n == n_samples for n in n_scored.values())
-
-    print("\n=== RAGAS Evaluation Results ===")
-    print(f"  questions evaluated : {n_samples} / {n_total} ({skipped} skipped)")
-    for name in _METRIC_NAMES:
-        print(f"  {name:<20}: {means[name]:.4f}  (scored {n_scored[name]}/{n_samples})")
-    print("================================\n")
+    question_meta = _load_question_meta()
+    answerable, no_answer = split_by_answerability(samples, question_meta)
+    refusal = summarize_refusals(answerable, no_answer)
+    df = _score_with_ragas(answerable, judge_provider, judge_model)
+    summary = summarize_scores(df)
 
     result_data = {
-        "faithfulness": means["faithfulness"],
-        "answer_relevancy": means["answer_relevancy"],
-        "n_questions": n_samples,
-        "n_scored": n_scored,
+        "faithfulness": summary["means"]["faithfulness"],
+        "answer_relevancy": summary["means"]["answer_relevancy"],
+        "n_questions": len(samples),
+        "n_scored": summary["n_scored"],
+        "refusal": refusal,
         "judge_provider": judge_provider,
         "judge_model": judge_model,
     }
+    _print_results(result_data, n_total, skipped)
+
+    report = write_score_report(
+        df, question_meta, _SCORES_FILE,
+        judge_provider=judge_provider, judge_model=judge_model, refusal=refusal,
+    )
+    print(format_breakdown(report["by_type"], "type"))
+    print()
+    print(format_breakdown(report["by_role"], "role"))
+    print(f"\nPer-question scores saved → {_SCORES_FILE}\n")
 
     if record_note is None:
         return result_data
-    if not is_complete:
+    if not answerable:
+        print("Not recording to EVAL_RESULTS.md: no answerable questions were scored by RAGAS.")
+        return result_data
+    if not all(n == len(answerable) for n in summary["n_scored"].values()):
         print(
             "Not recording to EVAL_RESULTS.md: some samples failed to score "
             "(judge LLM error or rate limit). Re-run with --eval-only to retry."
         )
         return result_data
-    _append_eval_results(
-        means["faithfulness"], means["answer_relevancy"], n_samples,
-        judge_provider, judge_model, record_note,
-    )
+    _append_eval_results(result_data, record_note)
     return result_data
 
 
-def _append_eval_results(
-    faithfulness: float,
-    answer_relevancy: float,
-    n_questions: int,
-    judge_provider: str,
-    judge_model: str,
-    note: str,
-) -> None:
+def _append_eval_results(result: dict, note: str) -> None:
+    refusal = result["refusal"]
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = (
         f"\n## {timestamp} — {note}\n"
-        f"- faithfulness:     {faithfulness:.4f}\n"
-        f"- answer_relevancy: {answer_relevancy:.4f}\n"
-        f"- questions:        {n_questions}\n"
-        f"- judge_provider:   {judge_provider}\n"
-        f"- judge_model:      {judge_model}\n"
+        f"- faithfulness:     {result['faithfulness']:.4f}\n"
+        f"- answer_relevancy: {result['answer_relevancy']:.4f}\n"
+        f"- questions:        {result['n_questions']} "
+        f"({refusal['n_answerable']} answerable scored by RAGAS, {refusal['n_no_answer']} no_answer)\n"
+        f"- refusal_accuracy: {_fmt_ratio(refusal['correct'], refusal['n_no_answer'])}\n"
+        f"- false_refusals:   {_fmt_ratio(refusal['false_refusals'], refusal['n_answerable'])}\n"
+        f"- judge_provider:   {result['judge_provider']}\n"
+        f"- judge_model:      {result['judge_model']}\n"
         f"- note: {note}\n"
     )
     with open(_RESULTS_FILE, "a", encoding="utf-8") as f:

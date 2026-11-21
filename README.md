@@ -16,7 +16,7 @@ An enterprise-grade internal knowledge base chatbot built with Retrieval-Augment
 - **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — faithfulness + answer relevancy scoring on 50 questions: faithfulness 0.7810 / answer relevancy 0.6931 (DeepSeek judge, all samples scored)
+- **RAGAS Evaluation** — 50 questions: faithfulness 0.9639 / answer relevancy 0.8572 on the 40 answerable ones, and 10/10 correct refusals on questions the documents can't answer (DeepSeek judge)
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
 - **77 Automated Tests** — guardrails, retrieval re-ranking, Redis denylist, re-ingestion logic
@@ -219,6 +219,8 @@ RAGAS scoring uses a "judge" LLM chosen by `EVAL_JUDGE_PROVIDER` and `EVAL_JUDGE
 
 Override either per run with `--judge-provider` / `--judge-model`. The judge is recorded with each entry in `EVAL_RESULTS.md`. Only compare scores produced by the same judge on the same question set.
 
+**How questions are scored.** `no_answer` questions (facts the documents don't contain) are scored by **refusal accuracy**: whether the bot replied with the prompt's exact refusal sentence. They're kept out of RAGAS because RAGAS gives a correct "I don't know" 0 on both metrics. Every other question is scored by RAGAS; an answerable question that gets refused counts as a **false refusal** and still scores 0 there. Each run also writes per-question scores, broken down by question type and role, to `eval_scores.json`.
+
 ```bash
 # Run against the 25-question subset (recommended — fits within free-tier limits)
 python -m src.monitoring.ragas_eval --subset --record "description of what changed"
@@ -242,10 +244,12 @@ Results are appended to `EVAL_RESULTS.md`.
 
 | Metric | Score |
 |--------|-------|
-| Faithfulness | **0.7810** |
-| Answer Relevancy | **0.6931** |
+| Faithfulness (40 answerable) | **0.9639** |
+| Answer Relevancy (40 answerable) | **0.8572** |
+| Refusal accuracy (10 `no_answer`) | **10/10** |
+| False refusals (40 answerable) | **0/40** |
 
-Judge: `deepseek-chat`, 50/50 samples scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions. Earlier entries in `EVAL_RESULTS.md` used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
+Judge: `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions. Earlier entries in `EVAL_RESULTS.md` used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable. Scoring all 50 with RAGAS, refusals included, gives 0.7810 / 0.6931.
 
 ---
 
