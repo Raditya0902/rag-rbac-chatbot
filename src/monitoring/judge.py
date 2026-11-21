@@ -13,7 +13,7 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # Model used when a provider is chosen without naming a model.
 _DEFAULT_MODELS = {
-    "groq": "llama-3.1-8b-instant",
+    "groq": "openai/gpt-oss-20b",
     "deepseek": "deepseek-chat",
 }
 

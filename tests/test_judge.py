@@ -19,7 +19,7 @@ def chat_classes():
 
 
 def test_resolve_uses_provider_default_model_when_none_given():
-    assert judge.resolve_judge("groq", None) == ("groq", "llama-3.1-8b-instant")
+    assert judge.resolve_judge("groq", None) == ("groq", "openai/gpt-oss-20b")
     assert judge.resolve_judge("deepseek", None) == ("deepseek", "deepseek-chat")
 
 
@@ -38,9 +38,9 @@ def test_resolve_rejects_unknown_provider():
 def test_groq_judge_uses_chat_groq(chat_classes):
     groq, openai = chat_classes
 
-    judge.build_judge_chat_model("groq", "llama-3.3-70b-versatile")
+    judge.build_judge_chat_model("groq", "openai/gpt-oss-120b")
 
-    groq.assert_called_once_with(model="llama-3.3-70b-versatile", api_key="groq-test-key")
+    groq.assert_called_once_with(model="openai/gpt-oss-120b", api_key="groq-test-key")
     openai.assert_not_called()
 
 

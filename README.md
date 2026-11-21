@@ -16,7 +16,7 @@ An internal knowledge base chatbot with Retrieval-Augmented Generation (RAG) and
 - **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — 50 questions: faithfulness 0.9639 / answer relevancy 0.8572 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
+- **RAGAS Evaluation** — 50 questions: faithfulness 0.8916 / answer relevancy 0.9048 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
 - **174 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
@@ -62,7 +62,7 @@ User
 
 | Layer | Technology |
 |-------|-----------|
-| LLM | Llama 3.3 70B via Groq |
+| LLM | `openai/gpt-oss-120b` via Groq (Llama 3.3 70B until Groq retired it) |
 | Embeddings | `all-MiniLM-L6-v2` (HuggingFace) |
 | Vector Store | ChromaDB (persistent, MMR search) |
 | BM25 | rank-bm25 |
@@ -221,7 +221,7 @@ RAGAS scoring uses a "judge" LLM chosen by `EVAL_JUDGE_PROVIDER` and `EVAL_JUDGE
 
 | Provider | Default model | Key | Notes |
 |----------|---------------|-----|-------|
-| `groq` (default) | `llama-3.1-8b-instant` | `GROQ_API_KEY` | Free tier; 8b has its own daily token pool, separate from the 70b RAG chain |
+| `groq` (default) | `openai/gpt-oss-20b` | `GROQ_API_KEY` | Free tier; shares Groq's rate limits with the RAG chain |
 | `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` | Paid, but a full 50-question run costs cents and avoids Groq quota limits |
 
 Override either per run with `--judge-provider` / `--judge-model`. The judge is recorded with each entry in `EVAL_RESULTS.md`. Only compare scores produced by the same judge on the same question set.
@@ -238,8 +238,8 @@ python -m src.monitoring.ragas_eval --eval-only --record "description of what ch
 # Full 50-question set
 python -m src.monitoring.ragas_eval --record "description of what changed"
 
-# Re-score cached answers with the 70b judge (uses the RAG chain's token quota)
-python -m src.monitoring.ragas_eval --eval-only --judge-model llama-3.3-70b-versatile --record "70b judge"
+# Re-score cached answers with a larger Groq judge (shares the RAG chain's token quota)
+python -m src.monitoring.ragas_eval --eval-only --judge-model openai/gpt-oss-120b --record "gpt-oss-120b judge"
 
 # Re-score cached answers with DeepSeek
 python -m src.monitoring.ragas_eval --eval-only --judge-provider deepseek --record "deepseek judge"
@@ -251,17 +251,25 @@ Results are appended to `EVAL_RESULTS.md`.
 
 | Metric | Score |
 |--------|-------|
-| Faithfulness (40 answerable) | **0.9639** |
-| Answer Relevancy (40 answerable) | **0.8572** |
+| Faithfulness (40 answerable) | **0.8916** |
+| Answer Relevancy (40 answerable) | **0.9048** |
 | Refusal accuracy (10 `no_answer`) | **10/10** |
 | False refusals (40 answerable) | **0/40** |
 
-Judge: `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions.
+Fresh answers from the current pipeline (`openai/gpt-oss-120b`, complete-sentence prompt), judged by `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions.
+
+| By type | n | Faithfulness | Relevancy |
+|---------|---|--------------|-----------|
+| factual | 15 | 1.0000 | 0.9676 |
+| ambiguous | 10 | 0.8890 | 0.8750 |
+| edge_case | 5 | 0.8667 | 0.9262 |
+| multi_hop | 10 | 0.7440 | 0.8298 |
 
 #### What these scores do and don't show
 
-- **The answers predate the latest prompt change.** They were generated on 2026-05-03 and re-scored later with `--eval-only`. Retrieval and refusal logic are unchanged since then, but the RAG prompt now asks for complete-sentence answers (which a spot check suggests raises answer relevancy). A full re-run without `--eval-only` is pending.
-- **Part of the rise over older entries comes from how scores are counted.** The same answers score 0.7810 / 0.6931 when all 50, refusals included, go through RAGAS, because RAGAS gives a correct "I don't know" 0. Scoring the 10 `no_answer` questions by refusal instead gives 0.9639 / 0.8572. Earlier entries in `EVAL_RESULTS.md` also used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
+- **Multi-hop answers are the weak spot.** On questions that combine several sections, gpt-oss-120b tends to state links between facts that the documents list separately (e.g. that check-ins exist "to review progress toward probation objectives"). The judge counts those as unsupported, which is why multi-hop faithfulness is 0.74.
+- **Two things changed at once versus the previous entry.** Groq retired Llama 3.3 70B, so the model moved to gpt-oss-120b in the same run as the complete-sentence prompt. The previous Llama answers (from 2026-05-03, same judge) scored 0.9639 / 0.8572, so relevancy rose and faithfulness fell, but the run can't separate the model's effect from the prompt's.
+- **Scoring refusals separately raises the averages.** RAGAS gives a correct "I don't know" 0, so `no_answer` questions are scored by refusal instead. With all 50 through RAGAS, the 2026-05-03 answers scored 0.7810 / 0.6931 rather than 0.9639 / 0.8572. Earlier entries in `EVAL_RESULTS.md` also used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
 - **Refusal accuracy is an exact-sentence match.** 10/10 means the bot gave the prescribed refusal on those questions. It doesn't measure anything finer.
 - **The question set is small and self-written, and the judge is an LLM.** Treat the numbers as a regression check for this project, not a benchmark.
 - **RBAC isn't measured by RAGAS.** It's covered by `tests/test_rbac_isolation.py` and `tests/test_session_isolation.py`.

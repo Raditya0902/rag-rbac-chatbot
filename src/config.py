@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = "./vectorstore"
     RETRIEVAL_TOP_K: int = 8      # final docs passed to LLM after re-ranking
     RETRIEVAL_FETCH_K: int = 24   # candidates fetched per retriever before re-ranking
-    LLM_MODEL: str = "llama-3.3-70b-versatile"
+    LLM_MODEL: str = "openai/gpt-oss-120b"
     # RAGAS judge: provider is "groq" or "deepseek". An empty model means the
-    # provider's default (groq: llama-3.1-8b-instant, deepseek: deepseek-chat).
+    # provider's default (groq: openai/gpt-oss-20b, deepseek: deepseek-chat).
     EVAL_JUDGE_PROVIDER: str = "groq"
     EVAL_JUDGE_MODEL: str = ""
     DEEPSEEK_API_KEY: str = ""

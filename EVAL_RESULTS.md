@@ -48,3 +48,13 @@ Metrics:
 - judge_model:      deepseek-chat
 - note: 50q full, deepseek-chat judge, no_answer scored by refusal accuracy
 - answers: cached from the 2026-05-03 50q run (pipeline before the 2026-11-21 complete-sentence prompt change); same answers as the entry above, only the scoring differs
+
+## 2026-11-21T20:15:56Z — 50q full re-run: gpt-oss-120b RAG model, complete-sentence prompt, deepseek-chat judge
+- faithfulness:     0.8916
+- answer_relevancy: 0.9048
+- questions:        50 (40 answerable scored by RAGAS, 10 no_answer)
+- refusal_accuracy: 10/10
+- false_refusals:   0/40
+- judge_provider:   deepseek
+- judge_model:      deepseek-chat
+- note: 50q full re-run: gpt-oss-120b RAG model, complete-sentence prompt, deepseek-chat judge
