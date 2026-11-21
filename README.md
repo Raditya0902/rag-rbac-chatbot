@@ -210,7 +210,7 @@ Both services start automatically. The frontend waits for the backend health che
 
 ## Evaluation
 
-RAGAS evaluation uses `llama-3.1-8b-instant` (Groq, 500k TPD pool) for scoring — separate from the `llama-3.3-70b-versatile` RAG chain — so the two don't share token budgets.
+RAGAS scoring uses a Groq "judge" model set by `EVAL_JUDGE_MODEL` (default `llama-3.1-8b-instant`, which has its own daily token pool separate from the `llama-3.3-70b-versatile` RAG chain). Override it per run with `--judge-model`; the judge is recorded with each entry in `EVAL_RESULTS.md`. Only compare scores produced by the same judge on the same question set.
 
 ```bash
 # Run against the 25-question subset (recommended — fits within free-tier limits)
@@ -221,6 +221,9 @@ python -m src.monitoring.ragas_eval --eval-only --record "description of what ch
 
 # Full 50-question set
 python -m src.monitoring.ragas_eval --record "description of what changed"
+
+# Re-score cached answers with the 70b judge (uses the RAG chain's token quota)
+python -m src.monitoring.ragas_eval --eval-only --judge-model llama-3.3-70b-versatile --record "70b judge"
 ```
 
 Results are appended to `EVAL_RESULTS.md`.

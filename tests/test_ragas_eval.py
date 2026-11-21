@@ -21,7 +21,7 @@ def _write_cache(path, n):
     path.write_text(json.dumps(samples))
 
 
-def _run_with_scores(tmp_path, rows, record_note=None):
+def _run_with_scores(tmp_path, rows, record_note=None, chat_groq=None, **kwargs):
     cache = tmp_path / "cache.json"
     results = tmp_path / "EVAL_RESULTS.md"
     results.write_text("# log\n")
@@ -30,10 +30,10 @@ def _run_with_scores(tmp_path, rows, record_note=None):
     fake_result.to_pandas.return_value = pd.DataFrame(rows)
     with patch.object(ragas_eval, "_CACHE_FILE", cache), \
          patch.object(ragas_eval, "_RESULTS_FILE", results), \
-         patch.object(ragas_eval, "ChatGroq", MagicMock()), \
+         patch.object(ragas_eval, "ChatGroq", chat_groq or MagicMock()), \
          patch.object(ragas_eval, "get_embeddings", MagicMock()), \
          patch.object(ragas_eval, "evaluate", return_value=fake_result):
-        out = ragas_eval.run_evaluation(record_note=record_note, eval_only=True)
+        out = ragas_eval.run_evaluation(record_note=record_note, eval_only=True, **kwargs)
     return out, results.read_text()
 
 
@@ -87,3 +87,36 @@ def test_records_run_when_every_sample_scored(tmp_path):
     assert "clean run" in log
     assert "faithfulness:     0.9000" in log
     assert "questions:        2" in log
+
+
+CLEAN_ROWS = [{"faithfulness": 0.8, "answer_relevancy": 0.6}]
+
+
+def test_judge_defaults_to_configured_model(tmp_path):
+    chat_groq = MagicMock()
+
+    with patch.object(ragas_eval.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
+        out, _ = _run_with_scores(tmp_path, CLEAN_ROWS, chat_groq=chat_groq)
+
+    assert chat_groq.call_args.kwargs["model"] == "judge-from-settings"
+    assert out["judge_model"] == "judge-from-settings"
+
+
+def test_judge_model_argument_overrides_setting(tmp_path):
+    chat_groq = MagicMock()
+
+    with patch.object(ragas_eval.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
+        out, _ = _run_with_scores(
+            tmp_path, CLEAN_ROWS, chat_groq=chat_groq, judge_model="judge-from-cli"
+        )
+
+    assert chat_groq.call_args.kwargs["model"] == "judge-from-cli"
+    assert out["judge_model"] == "judge-from-cli"
+
+
+def test_recorded_entry_names_judge_model(tmp_path):
+    _, log = _run_with_scores(
+        tmp_path, CLEAN_ROWS, record_note="judged run", judge_model="judge-x"
+    )
+
+    assert "- judge_model:      judge-x" in log

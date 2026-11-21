@@ -99,10 +99,13 @@ def run_evaluation(
     record_note: str | None = None,
     subset: bool = False,
     eval_only: bool = False,
+    judge_model: str | None = None,
 ) -> dict:
+    judge_model = judge_model or settings.EVAL_JUDGE_MODEL
+    print(f"Judge model: {judge_model}")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        eval_llm = LangchainLLMWrapper(ChatGroq(model="llama-3.1-8b-instant", api_key=settings.GROQ_API_KEY))
+        eval_llm = LangchainLLMWrapper(ChatGroq(model=judge_model, api_key=settings.GROQ_API_KEY))
         eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
 
     if eval_only:
@@ -172,6 +175,7 @@ def run_evaluation(
         "answer_relevancy": means["answer_relevancy"],
         "n_questions": n_samples,
         "n_scored": n_scored,
+        "judge_model": judge_model,
     }
 
     if record_note is None:
@@ -182,12 +186,18 @@ def run_evaluation(
             "(judge LLM error or rate limit). Re-run with --eval-only to retry."
         )
         return result_data
-    _append_eval_results(means["faithfulness"], means["answer_relevancy"], n_samples, record_note)
+    _append_eval_results(
+        means["faithfulness"], means["answer_relevancy"], n_samples, judge_model, record_note
+    )
     return result_data
 
 
 def _append_eval_results(
-    faithfulness: float, answer_relevancy: float, n_questions: int, note: str
+    faithfulness: float,
+    answer_relevancy: float,
+    n_questions: int,
+    judge_model: str,
+    note: str,
 ) -> None:
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = (
@@ -195,6 +205,7 @@ def _append_eval_results(
         f"- faithfulness:     {faithfulness:.4f}\n"
         f"- answer_relevancy: {answer_relevancy:.4f}\n"
         f"- questions:        {n_questions}\n"
+        f"- judge_model:      {judge_model}\n"
         f"- note: {note}\n"
     )
     with open(_RESULTS_FILE, "a", encoding="utf-8") as f:
@@ -222,5 +233,16 @@ if __name__ == "__main__":
         default=False,
         help="Skip RAG queries; score from cached eval_samples_cache.json",
     )
+    parser.add_argument(
+        "--judge-model",
+        metavar="MODEL",
+        default=None,
+        help="Groq model for RAGAS scoring (default: EVAL_JUDGE_MODEL setting)",
+    )
     args = parser.parse_args()
-    run_evaluation(record_note=args.record, subset=args.subset, eval_only=args.eval_only)
+    run_evaluation(
+        record_note=args.record,
+        subset=args.subset,
+        eval_only=args.eval_only,
+        judge_model=args.judge_model,
+    )
