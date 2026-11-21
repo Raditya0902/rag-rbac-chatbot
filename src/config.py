@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
 
     ENABLE_GUARD_MODEL: bool = False
-    GUARD_MODEL: str = "meta-llama/llama-guard-3-8b"
+    GUARD_MODEL: str = "meta-llama/llama-prompt-guard-2-86m"
+    GUARD_THRESHOLD: float = 0.5  # injection probability at or above which a query is blocked
     REDIS_URL: str = "redis://localhost:6379"
 
     JWT_SECRET_KEY: str = ""

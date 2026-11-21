@@ -13,7 +13,7 @@ An internal knowledge base chatbot with Retrieval-Augmented Generation (RAG) and
 - **Conversation Memory** — Redis-backed multi-turn chat with question condensing for follow-ups
 - **Input Guardrails** — blocks prompt injection, jailbreaks, SQL injection, XSS, and off-topic queries
 - **Output Guardrails** — PII redaction (SSN, email, phone, credit card) from all responses
-- **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
+- **Llama Prompt Guard 2** — optional second-stage injection classifier via Groq (disabled by default; blocks at `GUARD_THRESHOLD`, default 0.5)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
 - **RAGAS Evaluation** — 50 questions: faithfulness 0.8916 / answer relevancy 0.9048 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
@@ -94,7 +94,7 @@ rag-rbac-chatbot/
 │   │   ├── rbac.py              # role → namespace map
 │   │   └── users.py             # user store + bcrypt auth
 │   ├── guardrails/
-│   │   ├── input_guard.py       # injection detection, domain filter, Llama Guard 3
+│   │   ├── input_guard.py       # injection detection, domain filter, Prompt Guard 2
 │   │   └── output_guard.py      # PII redaction
 │   ├── ingestion/
 │   │   ├── ingest.py            # full ingest — populates ChromaDB

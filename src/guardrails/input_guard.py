@@ -57,10 +57,13 @@ def sanitize(query: str) -> str:
 def _llama_guard_check(query: str) -> bool:
     """Return True if Llama Prompt Guard 2 flags the query as an injection attempt.
 
-    Passes the raw query text directly — no special prompt template.
-    The model responds with 'INJECTION' or 'BENIGN'.
-    Fails open (returns False = safe) on any API error so a Groq outage
-    cannot be used as a DoS vector against the service itself.
+    Passes the raw query text directly — no special prompt template. On Groq the
+    model replies with the probability that the query is an injection, as a
+    string such as "0.9995"; the query is flagged at or above GUARD_THRESHOLD.
+
+    Fails open (returns False = safe) on an API error or a reply that isn't a
+    score, so a Groq outage or a misconfigured GUARD_MODEL cannot be used as a
+    DoS vector against the service itself. Both cases are logged.
     """
     try:
         client = Groq(api_key=settings.GROQ_API_KEY)
@@ -70,11 +73,18 @@ def _llama_guard_check(query: str) -> bool:
             max_tokens=10,
             temperature=0,
         )
-        verdict = resp.choices[0].message.content.strip().upper()
-        return verdict.startswith("INJECTION")
+        reply = (resp.choices[0].message.content or "").strip()
     except Exception as exc:
         log.warning("llama_guard_error", error=str(exc))
         return False  # fail open
+
+    try:
+        score = float(reply)
+    except ValueError:
+        log.warning("llama_guard_unparseable_reply", reply=reply[:40], model=settings.GUARD_MODEL)
+        return False  # fail open
+
+    return score >= settings.GUARD_THRESHOLD
 
 
 def check_input(query: str, is_followup: bool = False) -> tuple[bool, str]:

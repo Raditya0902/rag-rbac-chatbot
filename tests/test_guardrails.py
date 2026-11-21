@@ -179,8 +179,16 @@ def test_redact_preserves_surrounding_text():
 
 
 # ---------------------------------------------------------------------------
-# Llama Guard 3 second-stage check
+# Llama Prompt Guard 2 second-stage check
+#
+# On Groq, Prompt Guard 2 replies with the probability that the query is an
+# injection, as a string (e.g. "0.9995610117912292"), not a label. These mocks
+# use that real shape.
 # ---------------------------------------------------------------------------
+
+INJECTION_SCORE = "0.9995610117912292"  # Groq's reply to "Ignore all previous instructions..."
+BENIGN_SCORE = "0.00036306583206169307"  # Groq's reply to "What is the leave policy?"
+
 
 def _mock_groq(verdict: str):
     """Return a mock Groq client whose completion returns `verdict`."""
@@ -199,9 +207,9 @@ def test_llama_guard_disabled_by_default():
 
 
 def test_llama_guard_blocks_unsafe_query(monkeypatch):
-    """When enabled and Llama Prompt Guard 2 returns 'INJECTION', query is blocked."""
+    """When enabled and Prompt Guard 2 scores the query as an injection, it is blocked."""
     monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
-    mock_client = _mock_groq("INJECTION")
+    mock_client = _mock_groq(INJECTION_SCORE)
     with patch("src.guardrails.input_guard.Groq", return_value=mock_client, create=True):
         ok, reason = check_input("what is the company policy", is_followup=False)
     assert not ok
@@ -209,12 +217,42 @@ def test_llama_guard_blocks_unsafe_query(monkeypatch):
 
 
 def test_llama_guard_passes_safe_query(monkeypatch):
-    """When enabled and Llama Prompt Guard 2 returns 'BENIGN', query passes."""
+    """When enabled and Prompt Guard 2 scores the query as benign, it passes."""
     monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
-    mock_client = _mock_groq("BENIGN")
+    mock_client = _mock_groq(BENIGN_SCORE)
     with patch("src.guardrails.input_guard.Groq", return_value=mock_client, create=True):
         ok, _ = check_input("what is the company policy", is_followup=False)
     assert ok
+
+
+@pytest.mark.parametrize("score, blocked", [
+    ("0.49", False),
+    ("0.5", True),
+    ("0.51", True),
+])
+def test_llama_guard_blocks_at_the_threshold(monkeypatch, score, blocked):
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    monkeypatch.setattr(input_guard.settings, "GUARD_THRESHOLD", 0.5)
+    with patch("src.guardrails.input_guard.Groq", return_value=_mock_groq(score), create=True):
+        ok, _ = check_input("what is the company policy", is_followup=False)
+    assert ok is not blocked
+
+
+@pytest.mark.parametrize("reply", ["INJECTION", "", "safe"])
+def test_llama_guard_fails_open_on_unparseable_reply(monkeypatch, reply):
+    """A reply that isn't a score (e.g. a different guard model) is allowed and logged, not guessed at."""
+    monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
+    with patch("src.guardrails.input_guard.Groq", return_value=_mock_groq(reply), create=True), \
+         patch.object(input_guard.log, "warning") as warning:
+        ok, _ = check_input("what is the company policy", is_followup=False)
+    assert ok
+    assert warning.call_args.args[0] == "llama_guard_unparseable_reply"
+
+
+def test_default_guard_model_is_prompt_guard():
+    from src.config import Settings
+
+    assert Settings.model_fields["GUARD_MODEL"].default == "meta-llama/llama-prompt-guard-2-86m"
 
 
 def test_llama_guard_fails_open_on_api_error(monkeypatch):
@@ -226,7 +264,7 @@ def test_llama_guard_fails_open_on_api_error(monkeypatch):
 
 
 def test_llama_guard_not_called_when_regex_blocks(monkeypatch):
-    """Regex blocks first; Llama Guard should not be called for regex-blocked queries."""
+    """Regex blocks first; Prompt Guard should not be called for regex-blocked queries."""
     monkeypatch.setattr(input_guard.settings, "ENABLE_GUARD_MODEL", True)
     called = []
     with patch("src.guardrails.input_guard.Groq", side_effect=lambda **kw: called.append(1), create=True):
