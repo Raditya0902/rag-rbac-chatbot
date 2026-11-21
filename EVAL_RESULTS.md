@@ -29,3 +29,11 @@ Metrics:
 - answer_relevancy: 0.6495
 - questions:        50
 - note: Full 50-question set. RAGAS scoring via llama-3.1-8b-instant (scores are a conservative lower bound — 8b produces noisier statement extraction than 70b).
+
+## 2026-11-21T09:43:02Z — 50q full, re-scored with deepseek-chat judge (cached answers)
+- faithfulness:     0.7810
+- answer_relevancy: 0.6931
+- questions:        50
+- judge_provider:   deepseek
+- judge_model:      deepseek-chat
+- note: 50q full, re-scored with deepseek-chat judge (cached answers)

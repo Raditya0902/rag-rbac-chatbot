@@ -16,7 +16,7 @@ An enterprise-grade internal knowledge base chatbot built with Retrieval-Augment
 - **Llama Guard 3** — optional second-stage AI safety check via Groq (disabled by default)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — faithfulness + answer relevancy scoring; best run: faithfulness 0.9116 / answer relevancy 0.7346
+- **RAGAS Evaluation** — faithfulness + answer relevancy scoring on 50 questions: faithfulness 0.7810 / answer relevancy 0.6931 (DeepSeek judge, all samples scored)
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
 - **77 Automated Tests** — guardrails, retrieval re-ranking, Redis denylist, re-ingestion logic
@@ -238,12 +238,14 @@ python -m src.monitoring.ragas_eval --eval-only --judge-provider deepseek --reco
 
 Results are appended to `EVAL_RESULTS.md`.
 
-### Best scores (25q subset, hybrid BM25+vector + cross-encoder re-ranker)
+### Current scores (full 50-question set, hybrid BM25+vector + cross-encoder re-ranker)
 
 | Metric | Score |
 |--------|-------|
-| Faithfulness | **0.9116** |
-| Answer Relevancy | **0.7346** |
+| Faithfulness | **0.7810** |
+| Answer Relevancy | **0.6931** |
+
+Judge: `deepseek-chat`, 50/50 samples scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions. Earlier entries in `EVAL_RESULTS.md` used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
 
 ---
 
