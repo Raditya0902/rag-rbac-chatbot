@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 
 import requests
 import streamlit as st
@@ -88,7 +89,7 @@ def login_page() -> None:
                 "username": data["username"],
                 "role": data["role"],
                 "token": data["access_token"],
-                "session_id": f"{data['username']}_session",
+                "session_id": str(uuid.uuid4()),
                 "messages": [],
             })
             st.rerun()
