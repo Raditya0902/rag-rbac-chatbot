@@ -34,5 +34,6 @@ rag-project-plan.md
 
 # Generated eval artifacts — rebuild with ragas_eval.py
 eval_samples_cache.json
+eval_samples_progress.json
 eval_scores.json
 ingest_manifest.json

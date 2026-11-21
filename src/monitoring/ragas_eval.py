@@ -18,15 +18,22 @@ from ragas.metrics._answer_relevance import AnswerRelevancy
 
 from src.auth.rbac import ROLE_NAMESPACE_MAP
 from src.config import settings
+from src.monitoring.answer_progress import (
+    answer_fingerprint, load_progress, parse_retry_after, save_progress,
+)
 from src.monitoring.judge import build_judge_chat_model, resolve_judge
 from src.monitoring.refusal import split_by_answerability, summarize_refusals
 from src.monitoring.score_report import METRIC_NAMES, format_breakdown, write_score_report
 from src.rag.chain import run_query
+from src.rag.prompts import RAG_PROMPT
 from src.vectorstore.store import get_embeddings, get_rbac_retriever, rerank_docs
 
 _QUESTIONS_FILE = Path(__file__).parents[2] / "eval_questions.json"
 _SUBSET_FILE = Path(__file__).parents[2] / "eval_questions_subset.json"
 _CACHE_FILE = Path(__file__).parents[2] / "eval_samples_cache.json"
+_PROGRESS_FILE = Path(__file__).parents[2] / "eval_samples_progress.json"
+_RETRY_MARGIN_S = 5
+_DEFAULT_RETRY_WAIT_S = 60
 _RESULTS_FILE = Path(__file__).parents[2] / "EVAL_RESULTS.md"
 _SCORES_FILE = Path(__file__).parents[2] / "eval_scores.json"
 
@@ -57,10 +64,8 @@ def load_eval_questions(subset: bool = False) -> list[dict]:
 
 
 def _run_query_with_retry(question: str, namespaces: list, llm, max_wait: int = 3600) -> dict:
-    """Call run_query with the given LLM, retrying on rate-limit errors."""
-    import re
-
-    waited = 0
+    """Call run_query with the given LLM, waiting out rate limits as long as the provider asks."""
+    waited = 0.0
     while True:
         try:
             return run_query(question, namespaces, llm=llm)
@@ -68,8 +73,8 @@ def _run_query_with_retry(question: str, namespaces: list, llm, max_wait: int = 
             msg = str(exc)
             if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg:
                 raise
-            match = re.search(r"retry in ([\d.]+)s", msg)
-            secs = float(match.group(1)) + 5 if match else 60
+            asked = parse_retry_after(msg)
+            secs = (asked if asked is not None else _DEFAULT_RETRY_WAIT_S) + _RETRY_MARGIN_S
             if waited + secs > max_wait:
                 raise
             print(f"  Rate limited — waiting {secs:.0f}s (total waited: {waited + secs:.0f}s)...")
@@ -104,8 +109,22 @@ def _load_cache() -> list[SingleTurnSample]:
     ]
 
 
+def _answer_question(item: dict) -> dict:
+    """Ask the RAG chain one eval question; return its answer and the contexts it used."""
+    namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
+    result = _run_query_with_retry(item["question"], namespaces, llm=None)
+    if result["guardrail_blocked"]:
+        return {"response": "", "contexts": [], "blocked": True}
+    candidates = get_rbac_retriever(namespaces).invoke(item["question"])
+    docs = rerank_docs(item["question"], candidates, settings.RETRIEVAL_TOP_K)
+    return {"response": result["answer"], "contexts": [d.page_content for d in docs], "blocked": False}
+
+
 def _collect_samples(eval_only: bool, subset: bool) -> tuple[list[SingleTurnSample], int, int]:
-    """Return (samples, n_total, n_guardrail_skipped), from cache or by querying the RAG chain."""
+    """Return (samples, n_total, n_guardrail_skipped), from cache or by querying the RAG chain.
+
+    Answers are saved to _PROGRESS_FILE as they arrive; an interrupted run resumes from it.
+    """
     if eval_only:
         if not _CACHE_FILE.exists():
             raise FileNotFoundError(
@@ -116,27 +135,32 @@ def _collect_samples(eval_only: bool, subset: bool) -> tuple[list[SingleTurnSamp
         return samples, len(samples), 0
 
     eval_questions = load_eval_questions(subset=subset)
-    samples = []
-    skipped = 0
-    for item in eval_questions:
-        namespaces = ROLE_NAMESPACE_MAP.get(item["role"], ["general"])
-        result = _run_query_with_retry(item["question"], namespaces, llm=None)
-        if result["guardrail_blocked"]:
-            skipped += 1
-            continue
+    fingerprint = answer_fingerprint(RAG_PROMPT.messages[0].prompt.template, settings.LLM_MODEL)
+    answers = load_progress(_PROGRESS_FILE, fingerprint)
+    if answers:
+        print(f"Resuming: {len(answers)}/{len(eval_questions)} answers already saved in {_PROGRESS_FILE.name}")
 
-        retriever = get_rbac_retriever(namespaces)
-        candidates = retriever.invoke(item["question"])
-        docs = rerank_docs(item["question"], candidates, settings.RETRIEVAL_TOP_K)
-        samples.append(SingleTurnSample(
-            user_input=item["question"],
-            response=result["answer"],
-            retrieved_contexts=[doc.page_content for doc in docs],
-        ))
+    for item in eval_questions:
+        if item["question"] in answers:
+            continue
+        try:
+            record = _answer_question(item)
+        except Exception:
+            print(f"Stopped at {len(answers)}/{len(eval_questions)} answers; "
+                  f"they are saved in {_PROGRESS_FILE.name}. Re-run to resume.")
+            raise
+        answers = {**answers, item["question"]: record}
+        save_progress(_PROGRESS_FILE, fingerprint, answers)
         time.sleep(2)
 
+    records = [(item["question"], answers[item["question"]]) for item in eval_questions]
+    samples = [
+        SingleTurnSample(user_input=q, response=r["response"], retrieved_contexts=r["contexts"])
+        for q, r in records if not r["blocked"]
+    ]
     _save_cache(samples)
-    return samples, len(eval_questions), skipped
+    _PROGRESS_FILE.unlink(missing_ok=True)
+    return samples, len(eval_questions), len(records) - len(samples)
 
 
 def _score_with_ragas(samples: list[SingleTurnSample], judge_provider: str, judge_model: str) -> pd.DataFrame:

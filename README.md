@@ -19,7 +19,7 @@ An internal knowledge base chatbot with Retrieval-Augmented Generation (RAG) and
 - **RAGAS Evaluation** — 50 questions: faithfulness 0.8916 / answer relevancy 0.9048 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
-- **174 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
+- **190 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
 - **Docker** — one-command deployment with health checks
 
 ---
@@ -101,6 +101,7 @@ rag-rbac-chatbot/
 │   │   ├── loaders.py           # markdown + CSV loaders with MD5 hashing
 │   │   └── splitter.py          # recursive character splitter
 │   ├── monitoring/
+│   │   ├── answer_progress.py   # saves eval answers as they arrive so runs can resume
 │   │   ├── judge.py             # RAGAS judge LLM (Groq or DeepSeek)
 │   │   ├── langsmith_setup.py   # feedback logging to LangSmith
 │   │   ├── ragas_eval.py        # RAGAS faithfulness + answer relevancy
@@ -118,11 +119,11 @@ rag-rbac-chatbot/
 ├── tests/
 │   ├── test_rbac_isolation.py   # 60 tests — no role retrieves another department's chunks
 │   ├── test_session_isolation.py # 5 tests — chat history is private to its user
-│   ├── test_guardrails.py       # 49 tests — injection, PII, domain filter
+│   ├── test_guardrails.py       # 56 tests — injection, PII, domain filter
 │   ├── test_retrieval.py        # 7 tests — cross-encoder re-ranking
 │   ├── test_redis.py            # 8 tests — JWT denylist
 │   ├── test_reingest.py         # 8 tests — incremental re-ingestion
-│   └── test_ragas_eval.py, …    # 37 tests — eval pipeline, judge, refusal and score reports
+│   └── test_ragas_eval.py, …    # 46 tests — eval pipeline, judge, refusal, score reports, resume
 ├── resources/
 │   └── data/                    # mock company documents
 │       ├── engineering/
@@ -238,6 +239,10 @@ python -m src.monitoring.ragas_eval --eval-only --record "description of what ch
 # Full 50-question set
 python -m src.monitoring.ragas_eval --record "description of what changed"
 
+# Hit a rate limit or daily token cap partway? Answers are saved as they arrive
+# (eval_samples_progress.json), so running the same command again resumes.
+# Saved answers are discarded if the prompt or RAG model has changed since.
+
 # Re-score cached answers with a larger Groq judge (shares the RAG chain's token quota)
 python -m src.monitoring.ragas_eval --eval-only --judge-model openai/gpt-oss-120b --record "gpt-oss-120b judge"
 
@@ -282,14 +287,14 @@ Fresh answers from the current pipeline (`openai/gpt-oss-120b`, complete-sentenc
 pytest tests/ -v
 ```
 
-174 tests covering:
+190 tests covering:
 - RBAC isolation: for every role, the BM25 index and the ChromaDB query hold only that role's departments, checked with questions aimed at other departments (the ChromaDB tests skip if the store hasn't been ingested)
 - Chat-history isolation: two users sending the same session id get separate histories
 - Injection detection, off-topic filtering, follow-up handling, HTML sanitization, PII redaction
 - Cross-encoder re-ranking order and metadata preservation
 - Redis JWT denylist revocation and failure handling
 - Incremental re-ingestion change detection and MD5 hashing
-- Eval pipeline: judge selection, refusal scoring, per-question reports, unscored-sample handling
+- Eval pipeline: judge selection, refusal scoring, per-question reports, unscored-sample handling, rate-limit waits and resuming an interrupted run
 
 ---
 
