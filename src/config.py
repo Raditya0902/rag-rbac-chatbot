@@ -17,9 +17,11 @@ class Settings(BaseSettings):
     RETRIEVAL_TOP_K: int = 8      # final docs passed to LLM after re-ranking
     RETRIEVAL_FETCH_K: int = 24   # candidates fetched per retriever before re-ranking
     LLM_MODEL: str = "llama-3.3-70b-versatile"
-    # RAGAS judge. Default 8b draws on a separate Groq quota from LLM_MODEL;
-    # set to llama-3.3-70b-versatile for less noisy (but quota-heavy) scoring.
-    EVAL_JUDGE_MODEL: str = "llama-3.1-8b-instant"
+    # RAGAS judge: provider is "groq" or "deepseek". An empty model means the
+    # provider's default (groq: llama-3.1-8b-instant, deepseek: deepseek-chat).
+    EVAL_JUDGE_PROVIDER: str = "groq"
+    EVAL_JUDGE_MODEL: str = ""
+    DEEPSEEK_API_KEY: str = ""
 
     ENABLE_GUARD_MODEL: bool = False
     GUARD_MODEL: str = "meta-llama/llama-guard-3-8b"

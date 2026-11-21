@@ -9,7 +9,6 @@ from pathlib import Path
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import pandas as pd
-from langchain_groq import ChatGroq
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
@@ -18,6 +17,7 @@ from ragas.metrics._answer_relevance import AnswerRelevancy
 
 from src.auth.rbac import ROLE_NAMESPACE_MAP
 from src.config import settings
+from src.monitoring.judge import build_judge_chat_model, resolve_judge
 from src.rag.chain import run_query
 from src.vectorstore.store import get_embeddings, get_rbac_retriever, rerank_docs
 
@@ -100,12 +100,13 @@ def run_evaluation(
     subset: bool = False,
     eval_only: bool = False,
     judge_model: str | None = None,
+    judge_provider: str | None = None,
 ) -> dict:
-    judge_model = judge_model or settings.EVAL_JUDGE_MODEL
-    print(f"Judge model: {judge_model}")
+    judge_provider, judge_model = resolve_judge(judge_provider, judge_model)
+    print(f"Judge: {judge_provider}/{judge_model}")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        eval_llm = LangchainLLMWrapper(ChatGroq(model=judge_model, api_key=settings.GROQ_API_KEY))
+        eval_llm = LangchainLLMWrapper(build_judge_chat_model(judge_provider, judge_model))
         eval_embeddings = LangchainEmbeddingsWrapper(get_embeddings())
 
     if eval_only:
@@ -175,6 +176,7 @@ def run_evaluation(
         "answer_relevancy": means["answer_relevancy"],
         "n_questions": n_samples,
         "n_scored": n_scored,
+        "judge_provider": judge_provider,
         "judge_model": judge_model,
     }
 
@@ -187,7 +189,8 @@ def run_evaluation(
         )
         return result_data
     _append_eval_results(
-        means["faithfulness"], means["answer_relevancy"], n_samples, judge_model, record_note
+        means["faithfulness"], means["answer_relevancy"], n_samples,
+        judge_provider, judge_model, record_note,
     )
     return result_data
 
@@ -196,6 +199,7 @@ def _append_eval_results(
     faithfulness: float,
     answer_relevancy: float,
     n_questions: int,
+    judge_provider: str,
     judge_model: str,
     note: str,
 ) -> None:
@@ -205,6 +209,7 @@ def _append_eval_results(
         f"- faithfulness:     {faithfulness:.4f}\n"
         f"- answer_relevancy: {answer_relevancy:.4f}\n"
         f"- questions:        {n_questions}\n"
+        f"- judge_provider:   {judge_provider}\n"
         f"- judge_model:      {judge_model}\n"
         f"- note: {note}\n"
     )
@@ -237,7 +242,13 @@ if __name__ == "__main__":
         "--judge-model",
         metavar="MODEL",
         default=None,
-        help="Groq model for RAGAS scoring (default: EVAL_JUDGE_MODEL setting)",
+        help="Judge model for RAGAS scoring (default: EVAL_JUDGE_MODEL, else the provider's default)",
+    )
+    parser.add_argument(
+        "--judge-provider",
+        choices=["groq", "deepseek"],
+        default=None,
+        help="Judge LLM provider (default: EVAL_JUDGE_PROVIDER setting)",
     )
     args = parser.parse_args()
     run_evaluation(
@@ -245,4 +256,5 @@ if __name__ == "__main__":
         subset=args.subset,
         eval_only=args.eval_only,
         judge_model=args.judge_model,
+        judge_provider=args.judge_provider,
     )

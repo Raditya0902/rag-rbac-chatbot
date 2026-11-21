@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+import src.monitoring.judge as judge
 import src.monitoring.ragas_eval as ragas_eval
 
 
@@ -30,7 +31,10 @@ def _run_with_scores(tmp_path, rows, record_note=None, chat_groq=None, **kwargs)
     fake_result.to_pandas.return_value = pd.DataFrame(rows)
     with patch.object(ragas_eval, "_CACHE_FILE", cache), \
          patch.object(ragas_eval, "_RESULTS_FILE", results), \
-         patch.object(ragas_eval, "ChatGroq", chat_groq or MagicMock()), \
+         patch.object(judge, "ChatGroq", chat_groq or MagicMock()), \
+         patch.object(judge, "ChatOpenAI", MagicMock()), \
+         patch.object(judge.settings, "GROQ_API_KEY", "groq-test-key"), \
+         patch.object(judge.settings, "DEEPSEEK_API_KEY", "deepseek-test-key"), \
          patch.object(ragas_eval, "get_embeddings", MagicMock()), \
          patch.object(ragas_eval, "evaluate", return_value=fake_result):
         out = ragas_eval.run_evaluation(record_note=record_note, eval_only=True, **kwargs)
@@ -95,7 +99,8 @@ CLEAN_ROWS = [{"faithfulness": 0.8, "answer_relevancy": 0.6}]
 def test_judge_defaults_to_configured_model(tmp_path):
     chat_groq = MagicMock()
 
-    with patch.object(ragas_eval.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
+    with patch.object(judge.settings, "EVAL_JUDGE_PROVIDER", "groq"), \
+         patch.object(judge.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
         out, _ = _run_with_scores(tmp_path, CLEAN_ROWS, chat_groq=chat_groq)
 
     assert chat_groq.call_args.kwargs["model"] == "judge-from-settings"
@@ -105,7 +110,8 @@ def test_judge_defaults_to_configured_model(tmp_path):
 def test_judge_model_argument_overrides_setting(tmp_path):
     chat_groq = MagicMock()
 
-    with patch.object(ragas_eval.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
+    with patch.object(judge.settings, "EVAL_JUDGE_PROVIDER", "groq"), \
+         patch.object(judge.settings, "EVAL_JUDGE_MODEL", "judge-from-settings"):
         out, _ = _run_with_scores(
             tmp_path, CLEAN_ROWS, chat_groq=chat_groq, judge_model="judge-from-cli"
         )
@@ -116,7 +122,9 @@ def test_judge_model_argument_overrides_setting(tmp_path):
 
 def test_recorded_entry_names_judge_model(tmp_path):
     _, log = _run_with_scores(
-        tmp_path, CLEAN_ROWS, record_note="judged run", judge_model="judge-x"
+        tmp_path, CLEAN_ROWS, record_note="judged run",
+        judge_provider="deepseek", judge_model="judge-x",
     )
 
+    assert "- judge_provider:   deepseek" in log
     assert "- judge_model:      judge-x" in log
