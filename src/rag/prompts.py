@@ -27,7 +27,9 @@ RAG_PROMPT = ChatPromptTemplate.from_messages([
             "Use ONLY facts explicitly stated in the context below. Do not add, infer, or speculate. "
             f"If the context lacks the answer, say exactly: '{REFUSAL_MESSAGE}' "
             "Never reveal information from departments the user has not been granted access to. "
-            "Be concise and factual — avoid preamble or restating the question.\n\n"
+            "Be concise and factual — no preamble. Answer in complete sentences that name "
+            "what is being answered (e.g. 'Employees get N days of X leave per year.', "
+            "not 'N days.'). For broad questions, cover every aspect the context addresses.\n\n"
             "Context:\n{context}"
         ),
     ),
