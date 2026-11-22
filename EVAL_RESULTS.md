@@ -58,3 +58,13 @@ Metrics:
 - judge_provider:   deepseek
 - judge_model:      deepseek-chat
 - note: 50q full re-run: gpt-oss-120b RAG model, complete-sentence prompt, deepseek-chat judge
+
+## 2026-11-22T04:45:25Z — 50q full re-run: facts-first prompt (no inferred links; state the facts, then flag a missing link), gpt-oss-120b RAG model, deepseek-chat judge
+- faithfulness:     0.9490
+- answer_relevancy: 0.8831
+- questions:        50 (40 answerable scored by RAGAS, 10 no_answer)
+- refusal_accuracy: 10/10
+- false_refusals:   0/40
+- judge_provider:   deepseek
+- judge_model:      deepseek-chat
+- note: 50q full re-run: facts-first prompt (no inferred links; state the facts, then flag a missing link), gpt-oss-120b RAG model, deepseek-chat judge

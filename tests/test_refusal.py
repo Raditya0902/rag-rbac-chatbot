@@ -46,6 +46,15 @@ def test_ignores_non_refusals(response):
     assert not is_refusal(response)
 
 
+def test_partial_answer_with_missing_link_note_is_not_a_refusal():
+    from src.rag.prompts import MISSING_LINK_MESSAGE, RAG_PROMPT
+
+    answer = f"Marketing spend rose from $500M to $650M. {MISSING_LINK_MESSAGE}"
+
+    assert MISSING_LINK_MESSAGE in RAG_PROMPT.messages[0].prompt.template
+    assert not is_refusal(answer)
+
+
 def test_split_sends_only_no_answer_questions_to_refusal_scoring():
     samples = [_sample("ceo?", "x"), _sample("leave?", "y"), _sample("new?", "z")]
 

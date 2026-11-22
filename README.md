@@ -16,10 +16,10 @@ An internal knowledge base chatbot with Retrieval-Augmented Generation (RAG) and
 - **Llama Prompt Guard 2** — optional second-stage injection classifier via Groq (disabled by default; blocks at `GUARD_THRESHOLD`, default 0.5)
 - **User Feedback Loop** — 👍👎 buttons in UI wired to LangSmith for continuous evaluation
 - **Rate Limiting** — per-user rate limits (not just per-IP) on all endpoints
-- **RAGAS Evaluation** — 50 questions: faithfulness 0.8916 / answer relevancy 0.9048 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
+- **RAGAS Evaluation** — 50 questions: faithfulness 0.9490 / answer relevancy 0.8831 on the 40 answerable ones, and 10/10 correct refusals (DeepSeek judge; see [caveats](#what-these-scores-do-and-dont-show))
 - **Incremental Re-ingestion** — MD5-based change detection; only re-indexes modified documents
 - **Structured Logging** — JSON logs with latency, session IDs, guardrail events
-- **190 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
+- **191 Automated Tests** — RBAC isolation, chat-history isolation, guardrails, re-ranking, Redis denylist, re-ingestion, eval scoring
 - **Docker** — one-command deployment with health checks
 
 ---
@@ -123,7 +123,7 @@ rag-rbac-chatbot/
 │   ├── test_retrieval.py        # 7 tests — cross-encoder re-ranking
 │   ├── test_redis.py            # 8 tests — JWT denylist
 │   ├── test_reingest.py         # 8 tests — incremental re-ingestion
-│   └── test_ragas_eval.py, …    # 46 tests — eval pipeline, judge, refusal, score reports, resume
+│   └── test_ragas_eval.py, …    # 47 tests — eval pipeline, judge, refusal, score reports, resume
 ├── resources/
 │   └── data/                    # mock company documents
 │       ├── engineering/
@@ -256,24 +256,25 @@ Results are appended to `EVAL_RESULTS.md`.
 
 | Metric | Score |
 |--------|-------|
-| Faithfulness (40 answerable) | **0.8916** |
-| Answer Relevancy (40 answerable) | **0.9048** |
+| Faithfulness (40 answerable) | **0.9490** |
+| Answer Relevancy (40 answerable) | **0.8831** |
 | Refusal accuracy (10 `no_answer`) | **10/10** |
 | False refusals (40 answerable) | **0/40** |
 
-Fresh answers from the current pipeline (`openai/gpt-oss-120b`, complete-sentence prompt), judged by `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions.
+Fresh answers from the current pipeline (`openai/gpt-oss-120b`, facts-first prompt), judged by `deepseek-chat`, every sample scored. The set includes deliberately hard `multi_hop`, `ambiguous` and `no_answer` questions.
 
 | By type | n | Faithfulness | Relevancy |
 |---------|---|--------------|-----------|
-| factual | 15 | 1.0000 | 0.9676 |
-| ambiguous | 10 | 0.8890 | 0.8750 |
-| edge_case | 5 | 0.8667 | 0.9262 |
-| multi_hop | 10 | 0.7440 | 0.8298 |
+| factual | 15 | 0.9778 | 0.9543 |
+| ambiguous | 10 | 0.9592 | 0.8564 |
+| edge_case | 5 | 0.9167 | 0.9424 |
+| multi_hop | 10 | 0.9117 | 0.7732 |
 
 #### What these scores do and don't show
 
-- **Multi-hop answers are the weak spot.** On questions that combine several sections, gpt-oss-120b tends to state links between facts that the documents list separately (e.g. that check-ins exist "to review progress toward probation objectives"). The judge counts those as unsupported, which is why multi-hop faithfulness is 0.74.
-- **Two things changed at once versus the previous entry.** Groq retired Llama 3.3 70B, so the model moved to gpt-oss-120b in the same run as the complete-sentence prompt. The previous Llama answers (from 2026-05-03, same judge) scored 0.9639 / 0.8572, so relevancy rose and faithfulness fell, but the run can't separate the model's effect from the prompt's.
+- **The facts-first prompt trades a little relevancy for faithfulness.** With the same model and judge, the earlier complete-sentence prompt scored 0.8916 / 0.9048 (multi-hop 0.7440 / 0.8298). gpt-oss-120b tended to state links between facts the documents list separately, so the prompt now forbids unstated purposes, causes and connections: the model gives the facts it has, then says "The documents don't describe how these are connected." RAGAS reads that sentence as noncommittal and lowers relevancy, which is the cost. A stricter variant that didn't insist on giving the facts first reached 0.9566 faithfulness but fell to 0.8556 relevancy, with two answers at 0 (one run, same model and judge, not recorded in `EVAL_RESULTS.md`).
+- **Multi-hop answers are still the weak spot.** The model still sometimes states a link the documents don't: that check-ins are "intended to monitor" progress against probation objectives, or that the gateway's authorizers "interact with" the Authentication Service. Each number is also a single run with an LLM judge; one fully correct factual answer scored 0.67 faithfulness this run.
+- **The model change wasn't measured on its own.** Groq retired Llama 3.3 70B, so the model moved to gpt-oss-120b in the same run as the complete-sentence prompt. The previous Llama answers (from 2026-05-03, same judge) scored 0.9639 / 0.8572, so relevancy rose and faithfulness fell, but the run can't separate the model's effect from the prompt's.
 - **Scoring refusals separately raises the averages.** RAGAS gives a correct "I don't know" 0, so `no_answer` questions are scored by refusal instead. With all 50 through RAGAS, the 2026-05-03 answers scored 0.7810 / 0.6931 rather than 0.9639 / 0.8572. Earlier entries in `EVAL_RESULTS.md` also used other judges or question sets (the 25-question subset scored 0.9116 / 0.7346), so they aren't directly comparable.
 - **Refusal accuracy is an exact-sentence match.** 10/10 means the bot gave the prescribed refusal on those questions. It doesn't measure anything finer.
 - **The question set is small and self-written, and the judge is an LLM.** Treat the numbers as a regression check for this project, not a benchmark.
@@ -287,7 +288,7 @@ Fresh answers from the current pipeline (`openai/gpt-oss-120b`, complete-sentenc
 pytest tests/ -v
 ```
 
-190 tests covering:
+191 tests covering:
 - RBAC isolation: for every role, the BM25 index and the ChromaDB query hold only that role's departments, checked with questions aimed at other departments (the ChromaDB tests skip if the store hasn't been ingested)
 - Chat-history isolation: two users sending the same session id get separate histories
 - Injection detection, off-topic filtering, follow-up handling, HTML sanitization, PII redaction
